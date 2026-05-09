@@ -54,6 +54,154 @@ type FileMap = {
   resumen_archivo: string
 }
 
+type ImportanciaLevel = 'alta' | 'media' | 'baja'
+
+type TreeNode = {
+  name: string
+  path: string
+  isFile: boolean
+  children: TreeNode[]
+  importancia?: ImportanciaLevel
+  isReadable: boolean
+}
+
+function buildTree(files: ProjectFile[], importanceMap: Map<string, ImportanciaLevel>): TreeNode[] {
+  const root: TreeNode = { name: '', path: '', isFile: false, children: [], isReadable: true }
+
+  for (const f of files) {
+    const parts = f.path.split('/').filter(Boolean)
+    if (parts.length === 0) continue
+    let cur = root
+    parts.forEach((part, i) => {
+      const isLast = i === parts.length - 1
+      const fullPath = '/' + parts.slice(0, i + 1).join('/')
+      let next = cur.children.find((c) => c.name === part && c.isFile === isLast)
+      if (!next) {
+        next = {
+          name: part,
+          path: isLast ? f.path : fullPath,
+          isFile: isLast,
+          children: [],
+          isReadable: isLast ? !f.content.startsWith('[') && f.content.length > 5 : true,
+          ...(isLast && importanceMap.has(f.path) ? { importancia: importanceMap.get(f.path) } : {}),
+        }
+        cur.children.push(next)
+      }
+      cur = next
+    })
+  }
+
+  const sortRec = (n: TreeNode) => {
+    n.children.sort((a, b) => {
+      if (a.isFile !== b.isFile) return a.isFile ? 1 : -1
+      return a.name.localeCompare(b.name)
+    })
+    n.children.forEach(sortRec)
+  }
+  sortRec(root)
+  return root.children
+}
+
+function nodeMatchesSearch(node: TreeNode, query: string): boolean {
+  if (!query) return true
+  const q = query.toLowerCase()
+  if (node.name.toLowerCase().includes(q) || node.path.toLowerCase().includes(q)) return true
+  return node.children.some((c) => nodeMatchesSearch(c, q))
+}
+
+const importanciaPillStyles: Record<ImportanciaLevel, string> = {
+  alta: 'bg-indigo-100 text-indigo-700',
+  media: 'bg-slate-100 text-slate-600',
+  baja: 'bg-slate-50 text-slate-400',
+}
+
+function FileTreeNode({
+  node,
+  depth,
+  selectedPath,
+  expanded,
+  toggleFolder,
+  onSelectFile,
+  search,
+}: {
+  node: TreeNode
+  depth: number
+  selectedPath: string | null
+  expanded: Set<string>
+  toggleFolder: (path: string) => void
+  onSelectFile: (node: TreeNode) => void
+  search: string
+}) {
+  if (search && !nodeMatchesSearch(node, search)) return null
+
+  if (node.isFile) {
+    const isSelected = selectedPath === node.path
+    return (
+      <button
+        type="button"
+        onClick={() => onSelectFile(node)}
+        disabled={!node.isReadable}
+        className={`
+          w-full text-left flex items-center gap-2 py-1.5 pr-2 rounded-lg text-sm group
+          ${isSelected ? 'bg-indigo-50 text-indigo-900 font-semibold' : 'hover:bg-slate-50 text-slate-700'}
+          ${!node.isReadable ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}
+        `}
+        style={{ paddingLeft: `${depth * 14 + 8}px` }}
+        title={node.isReadable ? node.path : `${node.path} (binario o vacío)`}
+      >
+        <span className="text-slate-400 text-xs shrink-0">📄</span>
+        <span className="truncate flex-1 font-mono text-[13px]">{node.name}</span>
+        {node.importancia && (
+          <span
+            className={`text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-md shrink-0 ${importanciaPillStyles[node.importancia]}`}
+          >
+            {node.importancia}
+          </span>
+        )}
+      </button>
+    )
+  }
+
+  // search: auto-expand folders that contain matches
+  const isOpen = expanded.has(node.path) || (search.length > 0 && nodeMatchesSearch(node, search))
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => toggleFolder(node.path)}
+        className="w-full text-left flex items-center gap-2 py-1.5 rounded-lg text-sm hover:bg-slate-50 text-slate-800 font-semibold"
+        style={{ paddingLeft: `${depth * 14 + 8}px` }}
+      >
+        <span className="text-slate-500 text-xs shrink-0 w-3">{isOpen ? '▼' : '▶'}</span>
+        <span className="text-slate-500 shrink-0">📁</span>
+        <span className="truncate">{node.name}</span>
+        <span className="text-[10px] font-normal text-slate-400">
+          {countFiles(node)}
+        </span>
+      </button>
+      {isOpen &&
+        node.children.map((child) => (
+          <FileTreeNode
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+            selectedPath={selectedPath}
+            expanded={expanded}
+            toggleFolder={toggleFolder}
+            onSelectFile={onSelectFile}
+            search={search}
+          />
+        ))}
+    </div>
+  )
+}
+
+function countFiles(node: TreeNode): number {
+  if (node.isFile) return 1
+  return node.children.reduce((sum, c) => sum + countFiles(c), 0)
+}
+
 const Mermaid = ({ chart }: { chart: string }) => {
   const ref = useRef<HTMLDivElement>(null)
   const [renderError, setRenderError] = useState<string | null>(null)
@@ -203,167 +351,183 @@ function FileCard({
       </button>
 
       {expanded && (
-        <div className="border-t border-slate-100 px-6 py-6 bg-slate-50/40 space-y-5">
-          {loading && (
-            <div className="flex items-center gap-3 text-slate-500 text-sm">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" />
-              </div>
-              Generando mapa de este archivo…
-            </div>
-          )}
-
-          {error && (
-            <div className="text-rose-700 text-sm bg-rose-50 border border-rose-100 rounded-xl p-3">
-              ⚠️ {error}
-            </div>
-          )}
-
-          {fileMap && (
-            <>
-              <div>
-                <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
-                  Explicación con ejemplo
-                </div>
-                <p className="text-lg text-slate-800 leading-relaxed">{fileMap.explicacion}</p>
-              </div>
-
-              {fileMap.estructura && (
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
-                    Estructura usada
-                  </div>
-                  <p className="text-sm text-slate-700 font-mono bg-slate-100/60 inline-block px-3 py-1.5 rounded-xl">
-                    {fileMap.estructura}
-                  </p>
-                </div>
-              )}
-
-              {fileMap.flujo_ejecucion && fileMap.flujo_ejecucion.length > 0 && (
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
-                    Cómo funciona, paso a paso
-                  </div>
-                  <ol className="space-y-2 border-l-2 border-indigo-200 pl-5">
-                    {fileMap.flujo_ejecucion.map((paso, i) => (
-                      <li key={i} className="relative text-slate-800 text-sm leading-relaxed">
-                        <span className="absolute -left-[1.65rem] top-0.5 w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">
-                          {i + 1}
-                        </span>
-                        <span>{paso.replace(/^\d+\.\s*/, '')}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              )}
-
-              <div>
-                <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
-                  Diagrama de secuencia
-                </div>
-                <Mermaid chart={fileMap.diagrama_mermaid} />
-              </div>
-
-              {fileMap.funciones_definidas && fileMap.funciones_definidas.length > 0 && (
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
-                    Funciones que define este archivo
-                  </div>
-                  <div className="overflow-hidden rounded-2xl border border-slate-100">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-100/70 text-slate-600 text-xs uppercase tracking-wider">
-                        <tr>
-                          <th className="text-left font-bold px-4 py-2">Nombre real</th>
-                          <th className="text-left font-bold px-4 py-2">Qué hace y cuándo</th>
-                          <th className="text-left font-bold px-4 py-2">Llama a</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 bg-white">
-                        {fileMap.funciones_definidas.map((fn) => (
-                          <tr key={fn.real}>
-                            <td className="px-4 py-2 font-mono text-indigo-700 align-top whitespace-nowrap">{fn.real}</td>
-                            <td className="px-4 py-2 text-slate-700 align-top">{fn.humana}</td>
-                            <td className="px-4 py-2 align-top">
-                              {fn.llama_a.length === 0 ? (
-                                <span className="text-slate-300">—</span>
-                              ) : (
-                                <div className="flex flex-wrap gap-1">
-                                  {fn.llama_a.map((c) => (
-                                    <code
-                                      key={c}
-                                      className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md"
-                                    >
-                                      {c}
-                                    </code>
-                                  ))}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {fileMap.funciones_usadas && fileMap.funciones_usadas.length > 0 && (
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
-                    Funciones que usa de fuera
-                  </div>
-                  <div className="overflow-hidden rounded-2xl border border-slate-100">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-100/70 text-slate-600 text-xs uppercase tracking-wider">
-                        <tr>
-                          <th className="text-left font-bold px-4 py-2">Función</th>
-                          <th className="text-left font-bold px-4 py-2">De dónde</th>
-                          <th className="text-left font-bold px-4 py-2">Cómo se usa aquí</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 bg-white">
-                        {fileMap.funciones_usadas.map((fn, i) => (
-                          <tr key={`${fn.nombre}-${i}`}>
-                            <td className="px-4 py-2 font-mono text-emerald-700 align-top whitespace-nowrap">{fn.nombre}</td>
-                            <td className="px-4 py-2 text-slate-500 align-top text-xs">{fn.donde}</td>
-                            <td className="px-4 py-2 text-slate-700 align-top">{fn.como}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {fileMap.puntos_clave.length > 0 && (
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
-                    Puntos clave
-                  </div>
-                  <ul className="space-y-1.5">
-                    {fileMap.puntos_clave.map((p, i) => (
-                      <li key={i} className="flex items-start gap-2 text-slate-700 text-sm">
-                        <span className="text-indigo-400 mt-1">●</span>
-                        <span>{p}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {fileMap.resumen_archivo && (
-                <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4">
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 mb-1">
-                    En resumen
-                  </div>
-                  <p className="text-slate-800 text-sm font-medium">{fileMap.resumen_archivo}</p>
-                </div>
-              )}
-            </>
-          )}
+        <div className="border-t border-slate-100 px-6 py-6 bg-slate-50/40">
+          <FileMapDetail fileMap={fileMap} loading={loading} error={error} />
         </div>
+      )}
+    </div>
+  )
+}
+
+function FileMapDetail({
+  fileMap,
+  loading,
+  error,
+}: {
+  fileMap: FileMap | null
+  loading: boolean
+  error: string | null
+}) {
+  return (
+    <div className="space-y-5">
+      {loading && (
+        <div className="flex items-center gap-3 text-slate-500 text-sm">
+          <div className="flex gap-1">
+            <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+            <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+            <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" />
+          </div>
+          Generando mapa de este archivo…
+        </div>
+      )}
+
+      {error && (
+        <div className="text-rose-700 text-sm bg-rose-50 border border-rose-100 rounded-xl p-3">
+          ⚠️ {error}
+        </div>
+      )}
+
+      {fileMap && (
+        <>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
+              Explicación con ejemplo
+            </div>
+            <p className="text-lg text-slate-800 leading-relaxed">{fileMap.explicacion}</p>
+          </div>
+
+          {fileMap.estructura && (
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
+                Estructura usada
+              </div>
+              <p className="text-sm text-slate-700 font-mono bg-slate-100/60 inline-block px-3 py-1.5 rounded-xl">
+                {fileMap.estructura}
+              </p>
+            </div>
+          )}
+
+          {fileMap.flujo_ejecucion && fileMap.flujo_ejecucion.length > 0 && (
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                Cómo funciona, paso a paso
+              </div>
+              <ol className="space-y-2 border-l-2 border-indigo-200 pl-5">
+                {fileMap.flujo_ejecucion.map((paso, i) => (
+                  <li key={i} className="relative text-slate-800 text-sm leading-relaxed">
+                    <span className="absolute -left-[1.65rem] top-0.5 w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">
+                      {i + 1}
+                    </span>
+                    <span>{paso.replace(/^\d+\.\s*/, '')}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
+              Diagrama de secuencia
+            </div>
+            <Mermaid chart={fileMap.diagrama_mermaid} />
+          </div>
+
+          {fileMap.funciones_definidas && fileMap.funciones_definidas.length > 0 && (
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                Funciones que define este archivo
+              </div>
+              <div className="overflow-hidden rounded-2xl border border-slate-100">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-100/70 text-slate-600 text-xs uppercase tracking-wider">
+                    <tr>
+                      <th className="text-left font-bold px-4 py-2">Nombre real</th>
+                      <th className="text-left font-bold px-4 py-2">Qué hace y cuándo</th>
+                      <th className="text-left font-bold px-4 py-2">Llama a</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {fileMap.funciones_definidas.map((fn) => (
+                      <tr key={fn.real}>
+                        <td className="px-4 py-2 font-mono text-indigo-700 align-top whitespace-nowrap">{fn.real}</td>
+                        <td className="px-4 py-2 text-slate-700 align-top">{fn.humana}</td>
+                        <td className="px-4 py-2 align-top">
+                          {fn.llama_a.length === 0 ? (
+                            <span className="text-slate-300">—</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {fn.llama_a.map((c) => (
+                                <code
+                                  key={c}
+                                  className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md"
+                                >
+                                  {c}
+                                </code>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {fileMap.funciones_usadas && fileMap.funciones_usadas.length > 0 && (
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                Funciones que usa de fuera
+              </div>
+              <div className="overflow-hidden rounded-2xl border border-slate-100">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-100/70 text-slate-600 text-xs uppercase tracking-wider">
+                    <tr>
+                      <th className="text-left font-bold px-4 py-2">Función</th>
+                      <th className="text-left font-bold px-4 py-2">De dónde</th>
+                      <th className="text-left font-bold px-4 py-2">Cómo se usa aquí</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {fileMap.funciones_usadas.map((fn, i) => (
+                      <tr key={`${fn.nombre}-${i}`}>
+                        <td className="px-4 py-2 font-mono text-emerald-700 align-top whitespace-nowrap">{fn.nombre}</td>
+                        <td className="px-4 py-2 text-slate-500 align-top text-xs">{fn.donde}</td>
+                        <td className="px-4 py-2 text-slate-700 align-top">{fn.como}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {fileMap.puntos_clave.length > 0 && (
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                Puntos clave
+              </div>
+              <ul className="space-y-1.5">
+                {fileMap.puntos_clave.map((p, i) => (
+                  <li key={i} className="flex items-start gap-2 text-slate-700 text-sm">
+                    <span className="text-indigo-400 mt-1">●</span>
+                    <span>{p}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {fileMap.resumen_archivo && (
+            <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 mb-1">
+                En resumen
+              </div>
+              <p className="text-slate-800 text-sm font-medium">{fileMap.resumen_archivo}</p>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -380,12 +544,57 @@ function App() {
   const [fileMaps, setFileMaps] = useState<Record<string, FileMap>>({})
   const [fileMapLoading, setFileMapLoading] = useState<Record<string, boolean>>({})
   const [fileMapErrors, setFileMapErrors] = useState<Record<string, string>>({})
+  const [treeSelectedPath, setTreeSelectedPath] = useState<string | null>(null)
+  const [treeExpandedFolders, setTreeExpandedFolders] = useState<Set<string>>(new Set())
+  const [treeSearch, setTreeSearch] = useState('')
 
   const filesByPath = useMemo(() => {
     const map = new Map<string, ProjectFile>()
     for (const f of files) map.set(f.path, f)
     return map
   }, [files])
+
+  const importanceMap = useMemo(() => {
+    const m = new Map<string, ImportanciaLevel>()
+    if (overview) {
+      for (const a of overview.archivos) m.set(a.ruta, a.importancia)
+    }
+    return m
+  }, [overview])
+
+  const tree = useMemo(
+    () => (files.length > 0 ? buildTree(files, importanceMap) : []),
+    [files, importanceMap],
+  )
+
+  useEffect(() => {
+    if (tree.length === 0) return
+    setTreeExpandedFolders((prev) => {
+      if (prev.size > 0) return prev
+      const next = new Set<string>()
+      const seedDepth = (nodes: TreeNode[], depth: number) => {
+        for (const n of nodes) {
+          if (n.isFile) continue
+          if (depth <= 1) next.add(n.path)
+          if (depth < 2) seedDepth(n.children, depth + 1)
+        }
+      }
+      seedDepth(tree, 0)
+      return next
+    })
+  }, [tree])
+
+  const totalFilesInTree = useMemo(() => tree.reduce((s, n) => s + countFiles(n), 0), [tree])
+  const selectedTreeFile = treeSelectedPath ? filesByPath.get(treeSelectedPath) : undefined
+
+  const toggleFolder = useCallback((path: string) => {
+    setTreeExpandedFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
 
   const runOverview = useCallback(async (collected: ProjectFile[]) => {
     setLoading(true)
@@ -463,6 +672,9 @@ function App() {
     setStreamingText('')
     setFileCount(0)
     setFiles([])
+    setTreeSelectedPath(null)
+    setTreeSearch('')
+    setTreeExpandedFolders(new Set())
 
     try {
       let collected: ProjectFile[] = []
@@ -497,14 +709,8 @@ function App() {
     if (files.length > 0) runOverview(files)
   }, [files, runOverview])
 
-  const handleExpandFile = useCallback(
+  const ensureFileMap = useCallback(
     async (ruta: string) => {
-      if (expandedPath === ruta) {
-        setExpandedPath(null)
-        return
-      }
-      setExpandedPath(ruta)
-
       if (fileMaps[ruta] || fileMapLoading[ruta]) return
 
       const file = filesByPath.get(ruta)
@@ -545,13 +751,37 @@ function App() {
         setFileMapLoading((p) => ({ ...p, [ruta]: false }))
       }
     },
-    [expandedPath, fileMaps, fileMapLoading, filesByPath, overview],
+    [fileMaps, fileMapLoading, filesByPath, overview],
+  )
+
+  const handleExpandFile = useCallback(
+    async (ruta: string) => {
+      if (expandedPath === ruta) {
+        setExpandedPath(null)
+        return
+      }
+      setExpandedPath(ruta)
+      await ensureFileMap(ruta)
+    },
+    [expandedPath, ensureFileMap],
+  )
+
+  const handleSelectFromTree = useCallback(
+    (node: TreeNode) => {
+      if (!node.isFile || !node.isReadable) return
+      setTreeSelectedPath(node.path)
+      ensureFileMap(node.path)
+      setTimeout(() => {
+        document.getElementById('tree-detail-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 60)
+    },
+    [ensureFileMap],
   )
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop })
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-16 font-sans antialiased text-slate-900">
+    <div className="max-w-7xl mx-auto px-6 py-16 font-sans antialiased text-slate-900">
       <header className="text-center mb-16">
         <div className="inline-block px-4 py-1.5 mb-6 text-sm font-bold tracking-widest text-indigo-600 uppercase bg-indigo-50 rounded-full">
           Hackathon Edition v2.0
@@ -774,6 +1004,86 @@ function App() {
                     </li>
                   ))}
                 </ul>
+              </section>
+            )}
+
+            {tree.length > 0 && (
+              <section className="grid lg:grid-cols-[320px_1fr] gap-8">
+                <div className="bg-white border border-slate-100 rounded-3xl p-6 lg:sticky lg:top-6 lg:self-start lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-black tracking-tight text-slate-900">Explorar todo</h2>
+                    <span className="text-[10px] uppercase tracking-widest font-bold text-slate-400">
+                      {totalFilesInTree} archivos
+                    </span>
+                  </div>
+                  <input
+                    type="search"
+                    value={treeSearch}
+                    onChange={(e) => setTreeSearch(e.target.value)}
+                    placeholder="Buscar archivo o carpeta…"
+                    className="w-full text-sm px-3 py-2 mb-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
+                  />
+                  <div className="-mx-2">
+                    {tree.map((node) => (
+                      <FileTreeNode
+                        key={node.path}
+                        node={node}
+                        depth={0}
+                        selectedPath={treeSelectedPath}
+                        expanded={treeExpandedFolders}
+                        toggleFolder={toggleFolder}
+                        onSelectFile={handleSelectFromTree}
+                        search={treeSearch}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-4 leading-relaxed">
+                    Click un archivo para generar su mapa. Los grises son binarios o vacíos.
+                  </p>
+                </div>
+
+                <div id="tree-detail-panel" className="min-w-0">
+                  {!treeSelectedPath ? (
+                    <div className="bg-slate-50/60 border border-dashed border-slate-200 rounded-3xl p-12 text-center">
+                      <div className="text-5xl mb-4">📂</div>
+                      <h3 className="text-xl font-black text-slate-700 mb-2">Elige cualquier archivo del árbol</h3>
+                      <p className="text-slate-500 text-sm leading-relaxed max-w-md mx-auto">
+                        Aquí aparecerá su mapa de secuencia, el flujo paso a paso, y las funciones
+                        que define y que usa de fuera. Funciona con cualquier archivo, no solo los
+                        marcados como importantes.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-white border border-slate-100 rounded-3xl p-8 space-y-5">
+                      <div className="flex items-center justify-between gap-4 pb-5 border-b border-slate-100">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
+                            Archivo seleccionado
+                          </div>
+                          <code className="text-base font-mono text-slate-900 break-all">
+                            {treeSelectedPath}
+                          </code>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setTreeSelectedPath(null)}
+                          className="shrink-0 text-slate-400 hover:text-slate-700 text-sm font-medium"
+                        >
+                          Cerrar ✕
+                        </button>
+                      </div>
+                      {!selectedTreeFile ? (
+                        <p className="text-rose-700 text-sm">Archivo no encontrado en el upload.</p>
+                      ) : (
+                        <FileMapDetail
+                          fileMap={fileMaps[treeSelectedPath] ?? null}
+                          loading={!!fileMapLoading[treeSelectedPath]}
+                          error={fileMapErrors[treeSelectedPath] ?? null}
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
               </section>
             )}
           </>
