@@ -291,11 +291,10 @@ function normalizeMermaid(chart: string): string {
   );
 
   // 5) Limpia paréntesis dentro de etiquetas de nodo: 'X[foo(bar)]' → 'X[foo bar]'
-  //    Los parens rompen el parser de flowchart.
+  //    También limpia caracteres que Mermaid interpreta como sintaxis de shapes o paths.
   out = out.replace(/\[([^\[\]\n]*)\]/g, (_, inner: string) => {
     const cleaned = inner
-      .replace(/\(/g, " ")
-      .replace(/\)/g, "")
+      .replace(/[()\/\\.#@:]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
     return `[${cleaned}]`;
@@ -320,16 +319,16 @@ function validateFiles(files: unknown): { ok: true; files: ProjectFile[] } | { o
   if (!files || !Array.isArray(files) || files.length === 0) {
     return { ok: false, error: "No files provided" };
   }
-  if (files.length > MAX_FILES) {
-    return { ok: false, error: `Demasiados archivos (máximo ${MAX_FILES})` };
-  }
   const valid = files.filter(
     (f: any) => typeof f.path === "string" && typeof f.content === "string"
   );
   if (valid.length === 0) {
     return { ok: false, error: "No valid files provided" };
   }
-  return { ok: true, files: valid as ProjectFile[] };
+  if (valid.length > MAX_FILES) {
+    console.warn(`[validateFiles] Received ${valid.length} files, analyzing first ${MAX_FILES}`);
+  }
+  return { ok: true, files: valid.slice(0, MAX_FILES) as ProjectFile[] };
 }
 
 app.post("/api/overview", apiLimit, async (req, res) => {

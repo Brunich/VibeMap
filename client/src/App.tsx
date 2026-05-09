@@ -42,6 +42,22 @@ mermaid.initialize({
 
 type ProjectFile = { path: string; content: string }
 
+type DirectoryEntryHandle =
+  | {
+      kind: 'file'
+      name: string
+      getFile: () => Promise<File>
+    }
+  | {
+      kind: 'directory'
+      name: string
+      values: () => AsyncIterable<DirectoryEntryHandle>
+    }
+
+type WindowWithDirectoryPicker = Window & {
+  showDirectoryPicker?: () => Promise<Extract<DirectoryEntryHandle, { kind: 'directory' }>>
+}
+
 type OverviewArchivo = {
   ruta: string
   rol: string
@@ -309,6 +325,9 @@ const Mermaid = ({ chart, dense = false }: { chart: string; dense?: boolean }) =
   )
 }
 
+const MAX_FILES_FOR_OVERVIEW = 500
+const MAX_FILES_IN_TREE = 1000
+
 const isBinary = (buffer: Uint8Array): boolean => {
   const checkSize = Math.min(buffer.length, 1024)
   let nonPrintable = 0
@@ -328,6 +347,10 @@ const errorMessage = (err: unknown, fallback: string): string => {
   return err instanceof Error && err.message ? err.message : fallback
 }
 
+const isReadableProjectFile = (file: ProjectFile): boolean => {
+  return file.content.length > 5 && !file.content.startsWith('[')
+}
+
 const readSingleFile = async (file: File, path: string): Promise<ProjectFile> => {
   if (file.size > 1024 * 1024 * 10) {
     return { path, content: '[CONTENIDO OMITIDO: ARCHIVO MAYOR A 10MB]' }
@@ -342,6 +365,28 @@ const readSingleFile = async (file: File, path: string): Promise<ProjectFile> =>
     console.error(`Error leyendo ${path}:`, err)
     return { path, content: '[ERROR DE LECTURA]' }
   }
+}
+
+const readDirectoryHandle = async (
+  directory: Extract<DirectoryEntryHandle, { kind: 'directory' }>,
+  prefix = '',
+): Promise<ProjectFile[]> => {
+  const files: ProjectFile[] = []
+  for await (const entry of directory.values()) {
+    const path = `${prefix}/${entry.name}`
+    if (isIgnoredPath(path)) continue
+
+    if (entry.kind === 'file') {
+      try {
+        files.push(await readSingleFile(await entry.getFile(), path))
+      } catch {
+        files.push({ path, content: '[ERROR DE LECTURA]' })
+      }
+    } else {
+      files.push(...await readDirectoryHandle(entry, path))
+    }
+  }
+  return files
 }
 
 const readEntry = async (entry: FileSystemEntry): Promise<ProjectFile[]> => {
@@ -629,8 +674,10 @@ function App() {
   const [streamingText, setStreamingText] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null)
   const [fileCount, setFileCount] = useState<number>(0)
   const [files, setFiles] = useState<ProjectFile[]>([])
+  const [overviewFiles, setOverviewFiles] = useState<ProjectFile[]>([])
   const [expandedPath, setExpandedPath] = useState<string | null>(null)
   const [fileMaps, setFileMaps] = useState<Record<string, FileMap>>({})
   const [fileMapLoading, setFileMapLoading] = useState<Record<string, boolean>>({})
@@ -759,6 +806,7 @@ function App() {
   const startProcessing = useCallback(async (collected: ProjectFile[]) => {
     setLoading(true)
     setError(null)
+    setUploadNotice(null)
     setOverview(null)
     setStreamingText('')
     setTreeSelectedPath(null)
@@ -766,18 +814,34 @@ function App() {
     setTreeExpandedFolders(new Set())
 
     const filtered = collected.filter((f) => !isIgnoredPath(f.path))
+    const readable = filtered.filter(isReadableProjectFile)
+    const overviewReady = readable.slice(0, MAX_FILES_FOR_OVERVIEW)
+    const unreadableCount = filtered.length - readable.length
+    const limitCount = Math.max(readable.length - overviewReady.length, 0)
+    const treeLimitCount = Math.max(filtered.length - MAX_FILES_IN_TREE, 0)
+    const visibleFiles = filtered.slice(0, MAX_FILES_IN_TREE)
 
-    if (filtered.length === 0) {
+    if (overviewReady.length === 0) {
       setError('No se encontraron archivos procesables. Asegúrate de subir una carpeta con código.')
       setLoading(false)
       setFileCount(0)
       setFiles([])
+      setOverviewFiles([])
       return
     }
 
-    setFileCount(filtered.length)
-    setFiles(filtered)
-    await runOverview(filtered)
+    const omissions: string[] = []
+    if (unreadableCount > 0) omissions.push(`${unreadableCount} binarios, vacíos, muy grandes o ilegibles`)
+    if (limitCount > 0) omissions.push(`${limitCount} extras por límite de análisis`)
+    if (treeLimitCount > 0) omissions.push(`${treeLimitCount} extras ocultos del explorador para mantenerlo rápido`)
+    if (omissions.length > 0) {
+      setUploadNotice(`Se analizarán ${overviewReady.length} archivos. Omití ${omissions.join('; ')}.`)
+    }
+
+    setFileCount(overviewReady.length)
+    setFiles(visibleFiles)
+    setOverviewFiles(overviewReady)
+    await runOverview(overviewReady)
   }, [runOverview])
 
   const onDrop = useCallback(async (_acceptedFiles: File[], _fileRejections: FileRejection[], event: DropEvent) => {
@@ -835,9 +899,29 @@ function App() {
     }
   }, [startProcessing])
 
+  const folderFallbackInputRef = useRef<HTMLInputElement>(null)
+
+  const handlePickFolder = useCallback(async () => {
+    const picker = (window as WindowWithDirectoryPicker).showDirectoryPicker
+    if (!picker) {
+      folderFallbackInputRef.current?.click()
+      return
+    }
+
+    try {
+      const directory = await picker()
+      const collected = await readDirectoryHandle(directory)
+      await startProcessing(collected)
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      setError(errorMessage(err, 'No pude leer la carpeta seleccionada'))
+      setLoading(false)
+    }
+  }, [startProcessing])
+
   const handleRetry = useCallback(() => {
-    if (files.length > 0) runOverview(files)
-  }, [files, runOverview])
+    if (overviewFiles.length > 0) runOverview(overviewFiles)
+  }, [overviewFiles, runOverview])
 
   const ensureFileMap = useCallback(
     async (ruta: string) => {
@@ -966,25 +1050,17 @@ function App() {
             </div>
 
             <div className="flex flex-wrap justify-center gap-3 pt-4">
-              <label
-                onClick={(e) => e.stopPropagation()}
-                className="relative inline-flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10 cursor-pointer overflow-hidden"
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handlePickFolder()
+                }}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10"
               >
-                <input
-                  type="file"
-                  multiple
-                  // @ts-expect-error — webkitdirectory no está en los tipos estándar
-                  webkitdirectory=""
-                  directory=""
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  onChange={(e) => {
-                    handlePickedFiles(e.target.files)
-                    e.target.value = ''
-                  }}
-                />
                 <span>📁</span>
                 <span>Elegir carpeta</span>
-              </label>
+              </button>
               <label
                 onClick={(e) => e.stopPropagation()}
                 className="relative inline-flex items-center gap-2 px-6 py-3 bg-white text-slate-800 border-2 border-slate-200 rounded-2xl font-bold text-sm hover:border-indigo-400 hover:text-indigo-600 transition-colors cursor-pointer overflow-hidden"
@@ -1001,6 +1077,19 @@ function App() {
                 <span>📄</span>
                 <span>Elegir archivos sueltos</span>
               </label>
+              <input
+                ref={folderFallbackInputRef}
+                type="file"
+                multiple
+                // @ts-expect-error — webkitdirectory no está en los tipos estándar
+                webkitdirectory=""
+                directory=""
+                className="sr-only"
+                onChange={(e) => {
+                  handlePickedFiles(e.target.files)
+                  e.target.value = ''
+                }}
+              />
             </div>
 
             <p className="text-[11px] text-slate-400 pt-2">
@@ -1058,6 +1147,12 @@ function App() {
                 Reintentar
               </button>
             )}
+          </div>
+        )}
+
+        {uploadNotice && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl px-5 py-4 text-sm font-medium">
+            {uploadNotice}
           </div>
         )}
 
