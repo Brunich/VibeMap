@@ -248,31 +248,41 @@ const isBinary = (buffer: Uint8Array): boolean => {
   return nonPrintable / checkSize > 0.3
 }
 
+const IGNORED_PATH_RE =
+  /(^|\/)(node_modules|\.git|dist|build|bin|obj|\.next|\.cache|\.import|\.godot|\.turbo|\.svelte-kit|target|out)(\/|$)/
+
+const isIgnoredPath = (path: string): boolean => IGNORED_PATH_RE.test(path)
+
+const readSingleFile = async (file: File, path: string): Promise<ProjectFile> => {
+  if (file.size > 1024 * 1024 * 10) {
+    return { path, content: '[CONTENIDO OMITIDO: ARCHIVO MAYOR A 10MB]' }
+  }
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer())
+    if (isBinary(buf)) {
+      return { path, content: '[ARCHIVO BINARIO O MULTIMEDIA]' }
+    }
+    return { path, content: new TextDecoder('utf-8', { fatal: false }).decode(buf) }
+  } catch (err) {
+    console.error(`Error leyendo ${path}:`, err)
+    return { path, content: '[ERROR DE LECTURA]' }
+  }
+}
+
 const readEntry = async (entry: FileSystemEntry): Promise<ProjectFile[]> => {
+  if (isIgnoredPath(entry.fullPath)) return []
+
   if (entry.isFile) {
     const fileEntry = entry as FileSystemFileEntry
     return new Promise((resolve) => {
-      fileEntry.file(async (file) => {
-        try {
-          if (file.size > 1024 * 1024 * 10) {
-            resolve([{ path: entry.fullPath, content: '[CONTENIDO OMITIDO: ARCHIVO MAYOR A 10MB]' }])
-            return
-          }
-          const arrayBuffer = await file.arrayBuffer()
-          const uint8 = new Uint8Array(arrayBuffer)
-          if (isBinary(uint8)) {
-            resolve([{ path: entry.fullPath, content: '[ARCHIVO BINARIO O MULTIMEDIA]' }])
-            return
-          }
-          const decoder = new TextDecoder('utf-8', { fatal: false })
-          resolve([{ path: entry.fullPath, content: decoder.decode(uint8) }])
-        } catch (err) {
-          console.error(`Error leyendo ${entry.fullPath}:`, err)
-          resolve([{ path: entry.fullPath, content: '[ERROR DE LECTURA]' }])
-        }
-      })
+      fileEntry.file(
+        async (file) => resolve([await readSingleFile(file, entry.fullPath)]),
+        () => resolve([{ path: entry.fullPath, content: '[ERROR DE LECTURA]' }]),
+      )
     })
-  } else if (entry.isDirectory) {
+  }
+
+  if (entry.isDirectory) {
     const dirEntry = entry as FileSystemDirectoryEntry
     const reader = dirEntry.createReader()
     const readAll = async () => {
@@ -287,15 +297,10 @@ const readEntry = async (entry: FileSystemEntry): Promise<ProjectFile[]> => {
       return all
     }
     const entries = await readAll()
-    const filtered = entries.filter(
-      (e) =>
-        !['node_modules', '.git', 'dist', '.import', '.godot', 'build', 'bin', 'obj', '.next', '.cache'].includes(
-          e.name,
-        ),
-    )
-    const results = await Promise.all(filtered.map((e) => readEntry(e)))
+    const results = await Promise.all(entries.map((e) => readEntry(e)))
     return results.flat()
   }
+
   return []
 }
 
@@ -665,45 +670,87 @@ function App() {
     }
   }, [])
 
-  const onDrop = useCallback(async (acceptedFiles: File[], _fileRejections: FileRejection[], event: DropEvent) => {
+  const startProcessing = useCallback(async (collected: ProjectFile[]) => {
     setLoading(true)
     setError(null)
     setOverview(null)
     setStreamingText('')
-    setFileCount(0)
-    setFiles([])
     setTreeSelectedPath(null)
     setTreeSearch('')
     setTreeExpandedFolders(new Set())
 
+    const filtered = collected.filter((f) => !isIgnoredPath(f.path))
+
+    if (filtered.length === 0) {
+      setError('No se encontraron archivos procesables. Asegúrate de subir una carpeta con código.')
+      setLoading(false)
+      setFileCount(0)
+      setFiles([])
+      return
+    }
+
+    setFileCount(filtered.length)
+    setFiles(filtered)
+    await runOverview(filtered)
+  }, [runOverview])
+
+  const onDrop = useCallback(async (_acceptedFiles: File[], _fileRejections: FileRejection[], event: DropEvent) => {
     try {
-      let collected: ProjectFile[] = []
       const dataTransfer = (event as DragEvent | undefined)?.dataTransfer
       const items = dataTransfer?.items
-      if (items) {
+
+      let collected: ProjectFile[] = []
+
+      if (items && items.length > 0) {
         const entries = Array.from(items)
-          .map((item) => item.webkitGetAsEntry())
-          .filter((e): e is FileSystemEntry => e !== null)
-        const nested = await Promise.all(entries.map((e) => readEntry(e)))
-        collected = nested.flat()
-      } else {
+          .map((item) => item.webkitGetAsEntry?.())
+          .filter((e): e is FileSystemEntry => Boolean(e))
+
+        if (entries.length > 0) {
+          const nested = await Promise.all(entries.map((e) => readEntry(e)))
+          collected = nested.flat()
+        }
+      }
+
+      // Fallback: lee los archivos del DataTransfer directamente (sin estructura)
+      if (collected.length === 0 && dataTransfer?.files && dataTransfer.files.length > 0) {
         collected = await Promise.all(
-          acceptedFiles.map(async (f) => ({ path: f.name, content: await f.text() })),
+          Array.from(dataTransfer.files).map((f) => readSingleFile(f, '/' + f.name)),
         )
       }
 
       if (collected.length === 0) {
-        throw new Error('No se encontraron archivos procesables.')
+        throw new Error('No pude leer la carpeta. Prueba con los botones de abajo.')
       }
 
-      setFileCount(collected.length)
-      setFiles(collected)
-      await runOverview(collected)
+      await startProcessing(collected)
     } catch (err: any) {
       setError(err?.message || 'Error inesperado en VibeMap')
       setLoading(false)
     }
-  }, [runOverview])
+  }, [startProcessing])
+
+  const folderInputRef = useRef<HTMLInputElement>(null)
+  const filesInputRef = useRef<HTMLInputElement>(null)
+
+  const handlePickedFiles = useCallback(async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return
+    try {
+      const collected = await Promise.all(
+        Array.from(fileList).map((f) => {
+          const anyF = f as File & { webkitRelativePath?: string }
+          const rel = anyF.webkitRelativePath && anyF.webkitRelativePath.length > 0
+            ? '/' + anyF.webkitRelativePath
+            : '/' + f.name
+          return readSingleFile(f, rel)
+        }),
+      )
+      await startProcessing(collected)
+    } catch (err: any) {
+      setError(err?.message || 'Error inesperado leyendo archivos')
+      setLoading(false)
+    }
+  }, [startProcessing])
 
   const handleRetry = useCallback(() => {
     if (files.length > 0) runOverview(files)
@@ -778,7 +825,7 @@ function App() {
     [ensureFileMap],
   )
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop })
+  const { getRootProps, isDragActive } = useDropzone({ onDrop, noClick: true, noKeyboard: true })
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-16 font-sans antialiased text-slate-900">
@@ -800,17 +847,16 @@ function App() {
         <section
           {...getRootProps()}
           className={`
-            relative group border-2 border-dashed rounded-[3rem] p-20 text-center transition-all duration-700
+            relative group border-2 border-dashed rounded-[3rem] p-16 text-center transition-all duration-700
             ${
               isDragActive
                 ? 'border-indigo-600 bg-indigo-50/30 scale-[1.01] ring-8 ring-indigo-50'
-                : 'border-slate-200 bg-white hover:border-indigo-400 hover:shadow-[0_32px_64px_-16px_rgba(0,0,0,0.1)]'
+                : 'border-slate-200 bg-white hover:border-indigo-300'
             }
           `}
         >
-          <input {...getInputProps()} />
           <div className="space-y-6">
-            <div className="w-24 h-24 bg-slate-900 text-white rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-2xl group-hover:scale-110 transition-transform duration-500">
+            <div className="w-24 h-24 bg-slate-900 text-white rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-2xl group-hover:scale-105 transition-transform duration-500">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 className="h-12 w-12"
@@ -827,12 +873,70 @@ function App() {
               </svg>
             </div>
             <div className="space-y-2">
-              <p className="text-3xl font-black tracking-tight text-slate-900">Suelta tu carpeta de proyecto</p>
-              <p className="text-slate-400 text-lg font-medium">
-                Funciona con código de cualquier IA: React, Python, Godot, Unity, C++, etc.
+              <p className="text-3xl font-black tracking-tight text-slate-900">
+                {isDragActive ? '¡Suéltala aquí!' : 'Arrastra tu carpeta de proyecto'}
+              </p>
+              <p className="text-slate-400 text-base font-medium">
+                Acepta cualquier tipo de archivo (incluyendo .env, .gitignore, Dockerfile, README, etc.)
               </p>
             </div>
+
+            <div className="flex flex-wrap justify-center gap-3 pt-4">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  folderInputRef.current?.click()
+                }}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10"
+              >
+                <span>📁</span>
+                <span>Elegir carpeta</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  filesInputRef.current?.click()
+                }}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-white text-slate-800 border-2 border-slate-200 rounded-2xl font-bold text-sm hover:border-indigo-400 hover:text-indigo-600 transition-colors"
+              >
+                <span>📄</span>
+                <span>Elegir archivos sueltos</span>
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 pt-2">
+              Se ignoran automáticamente <code className="bg-slate-100 px-1 rounded">node_modules</code>,{' '}
+              <code className="bg-slate-100 px-1 rounded">.git/</code>,{' '}
+              <code className="bg-slate-100 px-1 rounded">dist/</code>,{' '}
+              <code className="bg-slate-100 px-1 rounded">build/</code> y similares.
+            </p>
           </div>
+
+          <input
+            ref={folderInputRef}
+            type="file"
+            multiple
+            // @ts-expect-error — webkitdirectory no está en los tipos estándar
+            webkitdirectory=""
+            directory=""
+            className="hidden"
+            onChange={(e) => {
+              handlePickedFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
+          <input
+            ref={filesInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              handlePickedFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
         </section>
 
         {loading && (
