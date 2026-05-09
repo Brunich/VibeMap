@@ -258,15 +258,55 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
 
 function normalizeMermaid(chart: string): string {
   if (!chart) return chart;
-  // En sequenceDiagram el ':' después de la flecha es sintaxis válida (mensaje).
+  // En sequenceDiagram el ':' después de la flecha es sintaxis válida.
   // Solo normalizamos para flowchart/graph.
   const isSequence = /^\s*sequenceDiagram\b/m.test(chart);
   if (isSequence) return chart;
-  // Patrón frecuente que rompe flowchart: 'A --> B: etiqueta' → 'A -->|etiqueta| B'
-  return chart.replace(
-    /(\w+(?:\[[^\]]*\])?)\s*-->\s*(\w+(?:\[[^\]]*\])?)\s*:\s*([^\n]+)/g,
-    (_, from, to, label) => `${from} -->|${label.trim()}| ${to}`
+
+  let out = chart;
+
+  // 1) 'A --|>|texto| B' → 'A -->|texto| B'
+  out = out.replace(
+    /(\w+)\s*--\|\>\|([^|\n]+)\|\s*(\w+)/g,
+    (_, a, label, b) => `${a} -->|${label.trim()}| ${b}`,
   );
+
+  // 2) 'A --|> B' (class-diagram inheritance) → 'A -->|hereda de| B'
+  out = out.replace(
+    /(\w+(?:\[[^\]]*\])?)\s*--\|\>\s*(\w+(?:\[[^\]]*\])?)/g,
+    (_, a, b) => `${a} -->|hereda de| ${b}`,
+  );
+
+  // 3) 'A --> B: etiqueta' → 'A -->|etiqueta| B'
+  out = out.replace(
+    /(\w+(?:\[[^\]]*\])?)\s*-->\s*(\w+(?:\[[^\]]*\])?)\s*:\s*([^\n]+)/g,
+    (_, from, to, label) => `${from} -->|${label.trim()}| ${to}`,
+  );
+
+  // 4) 'subgraph X [label/with.special]' → 'subgraph X ["label/with.special"]'
+  //    (Mermaid v11 acepta strings comillados en subgraph titles)
+  out = out.replace(
+    /^(\s*subgraph\s+\w+\s+)\[([^\]\n]*[\/.\\#@:][^\]\n]*)\]/gm,
+    (_, prefix, label) => `${prefix}["${label.replace(/"/g, "'").trim()}"]`,
+  );
+
+  // 5) Limpia paréntesis dentro de etiquetas de nodo: 'X[foo(bar)]' → 'X[foo bar]'
+  //    Los parens rompen el parser de flowchart.
+  out = out.replace(/\[([^\[\]\n]*)\]/g, (_, inner: string) => {
+    const cleaned = inner
+      .replace(/\(/g, " ")
+      .replace(/\)/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return `[${cleaned}]`;
+  });
+
+  // 6) Limpia paréntesis dentro de paréntesis: '(foo(bar))' → '(foo bar)' (forma circular Mermaid)
+  out = out.replace(/\(\(([^()\n]*)\)\)/g, (_, inner: string) => {
+    return `((${inner.replace(/\(|\)/g, " ").replace(/\s+/g, " ").trim()}))`;
+  });
+
+  return out;
 }
 
 function fixMermaidInPayload<T extends { diagrama_mermaid?: string }>(payload: T): T {

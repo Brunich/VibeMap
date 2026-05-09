@@ -4,8 +4,40 @@ import mermaid from 'mermaid'
 
 mermaid.initialize({
   startOnLoad: false,
-  theme: 'neutral',
+  theme: 'base',
   securityLevel: 'strict',
+  fontFamily: 'Inter, system-ui, sans-serif',
+  themeVariables: {
+    primaryColor: '#eef2ff',
+    primaryTextColor: '#1e1b4b',
+    primaryBorderColor: '#a5b4fc',
+    secondaryColor: '#f1f5f9',
+    tertiaryColor: '#f8fafc',
+    lineColor: '#94a3b8',
+    textColor: '#334155',
+    mainBkg: '#eef2ff',
+    secondBkg: '#f1f5f9',
+    tertiaryBkg: '#ffffff',
+    nodeBorder: '#a5b4fc',
+    clusterBkg: '#fafafa',
+    clusterBorder: '#e2e8f0',
+    titleColor: '#1e1b4b',
+    edgeLabelBackground: '#ffffff',
+    actorBkg: '#1e293b',
+    actorBorder: '#1e1b4b',
+    actorTextColor: '#ffffff',
+    actorLineColor: '#94a3b8',
+    signalColor: '#64748b',
+    signalTextColor: '#1e1b4b',
+    labelBoxBkgColor: '#eef2ff',
+    labelBoxBorderColor: '#a5b4fc',
+    labelTextColor: '#1e1b4b',
+    noteBkgColor: '#fef3c7',
+    noteTextColor: '#78350f',
+    noteBorderColor: '#fde68a',
+    activationBkgColor: '#c7d2fe',
+    activationBorderColor: '#818cf8',
+  },
 })
 
 type ProjectFile = { path: string; content: string }
@@ -202,30 +234,65 @@ function countFiles(node: TreeNode): number {
   return node.children.reduce((sum, c) => sum + countFiles(c), 0)
 }
 
-const Mermaid = ({ chart }: { chart: string }) => {
+const Mermaid = ({ chart, dense = false }: { chart: string; dense?: boolean }) => {
   const ref = useRef<HTMLDivElement>(null)
   const [renderError, setRenderError] = useState<string | null>(null)
+  const [showRaw, setShowRaw] = useState(false)
+  const [renderTick, setRenderTick] = useState(0)
 
   useEffect(() => {
     if (!ref.current || !chart) return
     setRenderError(null)
     const id = `mermaid-${crypto.randomUUID()}`
     mermaid
-      .render(id, chart)
+      .render(id, chart.trim())
       .then(({ svg }) => {
         if (ref.current) ref.current.innerHTML = svg
       })
       .catch((err) => {
         console.error('Mermaid render error:', err)
-        setRenderError('Sintaxis inválida en el diagrama')
+        setRenderError(err?.message?.split('\n')[0] || 'Sintaxis inválida')
       })
-  }, [chart])
+  }, [chart, renderTick])
+
+  if (!chart) {
+    return (
+      <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-500 italic">
+        No se generó diagrama para este nivel.
+      </div>
+    )
+  }
 
   if (renderError) {
     return (
-      <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-sm font-mono text-amber-700">
-        ⚠️ {renderError}
-        <pre className="mt-2 text-xs whitespace-pre-wrap text-amber-900/70">{chart}</pre>
+      <div className="p-5 bg-amber-50 border border-amber-200 rounded-2xl">
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div className="text-sm font-bold text-amber-900">
+            ⚠️ El diagrama tiene un error de sintaxis
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowRaw((v) => !v)}
+              className="text-xs font-bold text-amber-800 hover:text-amber-900 underline"
+            >
+              {showRaw ? 'Ocultar' : 'Ver código'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setRenderTick((t) => t + 1)}
+              className="text-xs font-bold text-amber-800 hover:text-amber-900 underline"
+            >
+              Reintentar
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-amber-800/80 mb-2">{renderError}</p>
+        {showRaw && (
+          <pre className="text-[11px] whitespace-pre-wrap font-mono text-amber-900/80 bg-white/60 p-3 rounded-xl border border-amber-100 overflow-x-auto">
+            {chart}
+          </pre>
+        )}
       </div>
     )
   }
@@ -233,7 +300,10 @@ const Mermaid = ({ chart }: { chart: string }) => {
   return (
     <div
       ref={ref}
-      className="flex justify-center my-6 overflow-x-auto p-4 bg-white rounded-3xl border border-slate-100 shadow-sm"
+      className={`
+        flex justify-center overflow-x-auto bg-white rounded-3xl border border-slate-100 shadow-sm
+        ${dense ? 'p-3 my-0' : 'p-6 my-2'}
+      `}
     />
   )
 }
@@ -412,29 +482,32 @@ function FileMapDetail({
             </div>
           )}
 
-          {fileMap.flujo_ejecucion && fileMap.flujo_ejecucion.length > 0 && (
+          <div className="grid xl:grid-cols-2 gap-6 items-start">
             <div>
-              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
                 Cómo funciona, paso a paso
               </div>
-              <ol className="space-y-2 border-l-2 border-indigo-200 pl-5">
-                {fileMap.flujo_ejecucion.map((paso, i) => (
-                  <li key={i} className="relative text-slate-800 text-sm leading-relaxed">
-                    <span className="absolute -left-[1.65rem] top-0.5 w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">
-                      {i + 1}
-                    </span>
-                    <span>{paso.replace(/^\d+\.\s*/, '')}</span>
-                  </li>
-                ))}
-              </ol>
+              {fileMap.flujo_ejecucion && fileMap.flujo_ejecucion.length > 0 ? (
+                <ol className="space-y-2 border-l-2 border-indigo-200 pl-5">
+                  {fileMap.flujo_ejecucion.map((paso, i) => (
+                    <li key={i} className="relative text-slate-800 text-sm leading-relaxed">
+                      <span className="absolute -left-[1.65rem] top-0.5 w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">
+                        {i + 1}
+                      </span>
+                      <span>{paso.replace(/^\d+\.\s*/, '')}</span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="text-sm text-slate-400 italic">Sin pasos numerados.</p>
+              )}
             </div>
-          )}
-
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
-              Diagrama de secuencia
+            <div className="xl:sticky xl:top-6">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
+                Diagrama de secuencia
+              </div>
+              <Mermaid chart={fileMap.diagrama_mermaid} />
             </div>
-            <Mermaid chart={fileMap.diagrama_mermaid} />
           </div>
 
           {fileMap.funciones_definidas && fileMap.funciones_definidas.length > 0 && (
@@ -1025,46 +1098,50 @@ function App() {
                     </p>
                   </div>
                 )}
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
-                    Cómo se conecta todo
-                  </div>
-                  <Mermaid chart={overview.diagrama_mermaid} />
-                </div>
-                {overview.flujo_principal && overview.flujo_principal.length > 0 && (
+                <div className="grid lg:grid-cols-2 gap-6 items-start">
                   <div>
                     <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
                       Flujo principal, paso a paso
                     </div>
-                    <ol className="space-y-3">
-                      {overview.flujo_principal.map((p) => (
-                        <li
-                          key={p.paso}
-                          className="flex gap-4 bg-slate-50/80 border border-slate-100 rounded-2xl p-4"
-                        >
-                          <span className="shrink-0 w-9 h-9 rounded-2xl bg-indigo-600 text-white font-black flex items-center justify-center">
-                            {p.paso}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-slate-800 leading-relaxed">{p.accion}</p>
-                            {p.archivos.length > 0 && (
-                              <div className="flex flex-wrap gap-1.5 mt-2">
-                                {p.archivos.map((ruta) => (
-                                  <code
-                                    key={ruta}
-                                    className="text-[11px] font-mono bg-white text-slate-500 border border-slate-200 px-2 py-0.5 rounded-md"
-                                  >
-                                    {ruta}
-                                  </code>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </li>
-                      ))}
-                    </ol>
+                    {overview.flujo_principal && overview.flujo_principal.length > 0 ? (
+                      <ol className="space-y-3">
+                        {overview.flujo_principal.map((p) => (
+                          <li
+                            key={p.paso}
+                            className="flex gap-3 bg-slate-50/80 border border-slate-100 rounded-2xl p-3"
+                          >
+                            <span className="shrink-0 w-8 h-8 rounded-xl bg-indigo-600 text-white font-black text-sm flex items-center justify-center">
+                              {p.paso}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-slate-800 leading-relaxed text-sm">{p.accion}</p>
+                              {p.archivos.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {p.archivos.map((ruta) => (
+                                    <code
+                                      key={ruta}
+                                      className="text-[10px] font-mono bg-white text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded-md"
+                                    >
+                                      {ruta}
+                                    </code>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="text-sm text-slate-400 italic">No se generó flujo numerado.</p>
+                    )}
                   </div>
-                )}
+                  <div className="lg:sticky lg:top-6">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
+                      Cómo se conecta todo
+                    </div>
+                    <Mermaid chart={overview.diagrama_mermaid} />
+                  </div>
+                </div>
               </div>
             </section>
 

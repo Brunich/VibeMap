@@ -73,11 +73,20 @@ REGLAS ESTRICTAS DE MERMAID:
        Inventory->>Pokeball: apply()
        Pokeball-->>Inventory: print(\"lanzaste pokeball\")
 
-REGLAS COMUNES DE MERMAID:
+REGLAS COMUNES DE MERMAID — PROHIBIDO ROMPER ESTAS:
 - IDs sin espacios (P_ready, I_add). Texto en español va entre [].
-- Sin caracteres '(', ')', '/', '#' dentro de los corchetes [] del flowchart.
-  En sequenceDiagram el texto después de ':' SÍ admite paréntesis para argumentos.
-- Para flechas con etiqueta en flowchart usa SIEMPRE '|texto|'. NUNCA ': texto'.
+- En FLOWCHART (subgraph + nodos), las etiquetas entre [] NO pueden contener
+  '(', ')', '/', '\\\\', '.', '#', '@', ':' — solo letras, números, espacios.
+  SI necesitas mostrar args de una función, escribe el nombre de la función pelado:
+    BIEN: P_use_item[use_item]
+    MAL:  P_use_item[use_item(item_id)]
+- En SUBGRAPH titles, NO uses paths con barras ni puntos:
+    BIEN: subgraph Player
+    MAL:  subgraph Player [src/Player.gd]
+- Para flechas con etiqueta en flowchart usa SIEMPRE '-->|texto|', NUNCA ': texto'.
+- Para herencia en flowchart usa '-->|hereda de|', NUNCA '--|>'.
+- En sequenceDiagram el texto después de ':' SÍ admite paréntesis para argumentos
+  (es la única excepción).
 
 OBJETIVO: que alguien que recibió este código de una IA pueda entender, paso a paso,
 qué hace y en qué orden.
