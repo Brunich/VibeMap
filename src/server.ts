@@ -138,9 +138,13 @@ INSTRUCCIONES PARA EL JSON DE SALIDA:
 - "resumen": qué hace el proyecto, con UN ejemplo concreto (no metáforas tipo "es como X").
 - "estructura_general": el patrón arquitectónico real que ves (no inventes uno).
 - "diagrama_mermaid": 'flowchart TD' DETALLADO con subgraphs por archivo/clase. Dentro
-  de cada subgraph lista las 2-4 funciones más importantes y las estructuras de datos
-  relevantes. Conecta funciones entre archivos con flechas '-->|llama a|', '-->|usa|',
-  '-->|crea|'. Etiquetas SIEMPRE con '|texto|', NUNCA con ': texto'.
+  de cada subgraph lista las 3-6 funciones más importantes y las estructuras de datos
+  relevantes. El diagrama es la explicación principal: cada flecha debe decir qué
+  función llama a cuál Y PARA QUÉ. Usa etiquetas de 4-10 palabras como
+  '-->|valida archivos antes de crear prompt|', '-->|envía contenido para generar JSON|',
+  '-->|guarda resultado en estado visible|'. NO uses etiquetas genéricas de una sola
+  palabra como '-->|usa|', '-->|crea|' o '-->|llama a|'. Etiquetas SIEMPRE con '|texto|',
+  NUNCA con ': texto'.
 - "flujo_principal": **CRÍTICO** — pasos numerados (1, 2, 3...) en ORDEN cronológico
   describiendo el caso de uso típico de principio a fin. Cada "accion" debe mencionar
   funciones reales y archivos. Ej: paso 1 'Player._ready() se ejecuta al cargar la
@@ -177,8 +181,10 @@ INSTRUCCIONES PARA EL JSON DE SALIDA:
   "Resource de Godot con Array de Item", "Componente React con dos useState".
 - "diagrama_mermaid": **OBLIGATORIO 'sequenceDiagram'**. Muestra los participants
   (clases/objetos involucrados) y las llamadas en ORDEN cronológico de arriba a abajo.
-  Cada flecha es una llamada concreta con sus argumentos reales. Usa 'Note over X: ...'
-  para marcar fases. No uses flowchart aquí — el usuario quiere ver el ORDEN de llamadas.
+  Cada flecha es una llamada concreta con sus argumentos reales y una frase corta del
+  propósito: 'validateFiles(files) para descartar entradas inválidas', 'setOverview(data)
+  para mostrar el mapa final'. Usa 'Note over X: ...' para marcar fases y explicar por
+  qué ocurre ese bloque. No uses flowchart aquí — el usuario quiere ver el ORDEN de llamadas.
 - "flujo_ejecucion": **CRÍTICO** — pasos numerados (cada string empieza con "1.", "2.",
   etc.) describiendo en ORDEN cronológico qué hace el archivo, mencionando la función
   responsable de cada paso. Mínimo 3 pasos. Ej:
@@ -203,42 +209,67 @@ type GeminiError = {
   message?: string;
 };
 
-function describeGeminiError(err: unknown): { status: number; userMessage: string } {
+type UserFacingGeminiError = {
+  status: number;
+  userMessage: string;
+  retryable: boolean;
+  retryAfterMs?: number;
+};
+
+function parseRetryDelayMs(delay?: string): number | undefined {
+  if (!delay) return undefined;
+  const seconds = delay.match(/^(\d+(?:\.\d+)?)s$/i);
+  if (seconds) return Math.ceil(Number(seconds[1]) * 1000);
+  const millis = delay.match(/^(\d+(?:\.\d+)?)ms$/i);
+  if (millis) return Math.ceil(Number(millis[1]));
+  return undefined;
+}
+
+function describeGeminiError(err: unknown): UserFacingGeminiError {
   const e = err as GeminiError;
   const code = e?.status;
   if (code === 429) {
     const retryInfo = e?.errorDetails?.find((d) => d["@type"]?.includes("RetryInfo"));
     const wait = retryInfo?.retryDelay ?? "unos segundos";
+    const retryAfterMs = parseRetryDelayMs(retryInfo?.retryDelay) ?? 10_000;
     return {
       status: 429,
       userMessage: `Gemini está limitando peticiones. Espera ${wait} y vuelve a intentar. Si pasa seguido, tu cuota gratuita del día puede haberse agotado.`,
+      retryable: true,
+      retryAfterMs,
     };
   }
   if (code === 401 || code === 403) {
     return {
       status: code,
       userMessage: "La API key de Gemini no es válida o no tiene permiso. Revisa GEMINI_API_KEY en .env.",
+      retryable: false,
     };
   }
   if (code === 503) {
     return {
       status: 503,
       userMessage: "Gemini está sobrecargado. Reintenta en un momento.",
+      retryable: true,
+      retryAfterMs: 6_000,
     };
   }
   if (code === 400) {
     return {
       status: 400,
       userMessage: "Gemini rechazó la petición. Posiblemente el proyecto es demasiado grande o tiene contenido que no puede procesar.",
+      retryable: false,
     };
   }
   return {
     status: 500,
     userMessage: "No pude generar el mapa. Intenta de nuevo en un momento.",
+    retryable: true,
+    retryAfterMs: 5_000,
   };
 }
 
-async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 2): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -246,9 +277,10 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
     } catch (err) {
       lastError = err;
       const e = err as GeminiError;
-      const retryable = e?.status === 503 || e?.status === 429;
+      const described = describeGeminiError(err);
+      const retryable = described.retryable && (e?.status === 503 || e?.status === 429);
       if (!retryable || attempt === maxAttempts) throw err;
-      const backoffMs = Math.min(1500 * 2 ** (attempt - 1), 8000);
+      const backoffMs = Math.min(described.retryAfterMs ?? 1500 * 2 ** (attempt - 1), 45_000);
       console.log(`[retry] attempt ${attempt} failed (${e?.status}), waiting ${backoffMs}ms`);
       await new Promise((r) => setTimeout(r, backoffMs));
     }
@@ -354,8 +386,8 @@ app.post("/api/overview", apiLimit, async (req, res) => {
     res.json(fixMermaidInPayload(parsed));
   } catch (err) {
     console.error("[overview] Error:", err);
-    const { status, userMessage } = describeGeminiError(err);
-    res.status(status).json({ error: userMessage });
+    const { status, userMessage, retryable, retryAfterMs } = describeGeminiError(err);
+    res.status(status).json({ error: userMessage, retryable, retryAfterMs });
   }
 });
 
@@ -422,11 +454,11 @@ app.post("/api/overview-stream", apiLimit, async (req, res) => {
     res.end();
   } catch (err) {
     console.error("[overview-stream] Error:", err);
-    const { status, userMessage } = describeGeminiError(err);
+    const { status, userMessage, retryable, retryAfterMs } = describeGeminiError(err);
     if (!res.headersSent) {
-      res.status(status).json({ error: userMessage });
+      res.status(status).json({ error: userMessage, retryable, retryAfterMs });
     } else {
-      res.write(`event: error\ndata: ${JSON.stringify({ error: userMessage })}\n\n`);
+      res.write(`event: error\ndata: ${JSON.stringify({ error: userMessage, retryable, retryAfterMs })}\n\n`);
       res.end();
     }
   }
@@ -461,8 +493,8 @@ app.post("/api/file-map", apiLimit, async (req, res) => {
     res.json(fixMermaidInPayload(parsed));
   } catch (err) {
     console.error("[file-map] Error:", err);
-    const { status, userMessage } = describeGeminiError(err);
-    res.status(status).json({ error: userMessage });
+    const { status, userMessage, retryable, retryAfterMs } = describeGeminiError(err);
+    res.status(status).json({ error: userMessage, retryable, retryAfterMs });
   }
 });
 

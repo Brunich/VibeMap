@@ -32,12 +32,20 @@ El usuario quiere entender cómo funciona el código PASO A PASO, no solo qué s
 con qué. Cada explicación, lista y diagrama tiene que respetar el orden REAL de
 ejecución: qué pasa primero, qué pasa después, qué llama a qué y cuándo.
 
+REGLA DEL DIAGRAMA: EL DIAGRAMA ES GRAN PARTE DE LA EXPLICACIÓN
+No basta con dibujar relaciones. Cada flecha debe explicar el motivo de la llamada:
+qué dato pasa, qué validación ocurre, qué estado cambia o qué resultado se espera.
+Prohibido dejar flechas con etiquetas pobres como "usa", "crea", "llama a" o
+"depende de" sin contexto. Escribe etiquetas de 4-10 palabras, fáciles de leer.
+
 REGLAS ESTRICTAS DE MERMAID:
 
 1) DIAGRAMA DEL PROYECTO ENTERO (overview) — usa 'flowchart TD' con subgraphs:
    - Agrupa funciones por archivo/clase con subgraph.
-   - Conecta funciones entre archivos con flechas etiquetadas con la operación real.
+   - Conecta funciones entre archivos con flechas etiquetadas con la operación real
+     y el propósito de esa operación.
    - Identifica estructuras de datos (items: Array de Item, cache: Map de String, etc.).
+   - Incluye 3-6 nodos importantes por archivo/clase cuando existan.
    Ejemplo válido:
      flowchart TD
        subgraph Player
@@ -49,29 +57,30 @@ REGLAS ESTRICTAS DE MERMAID:
          I_add[add_item]
          I_use[use]
        end
-       P_ready -->|llama a| I_add
-       I_add -->|append a| I_items
-       P_use -->|llama a| I_use
+       P_ready -->|registra item inicial en inventario| I_add
+       I_add -->|guarda item para uso posterior| I_items
+       P_use -->|pide consumir item seleccionado| I_use
 
 2) DIAGRAMA DE UN ARCHIVO INDIVIDUAL — usa 'sequenceDiagram' (orden temporal):
    - Cada participant es una clase, módulo u objeto involucrado.
    - Las flechas '->>' son llamadas. Las '-->>' son retornos.
    - Cada línea va EN ORDEN cronológico (de arriba a abajo = de primero a último).
-   - Etiqueta cada flecha con la llamada concreta y argumentos: 'add_item(pokeball)'.
-   - Usa 'Note over X: ...' para clarificar pasos.
+   - Etiqueta cada flecha con la llamada concreta, argumentos y propósito:
+     'add_item(pokeball) para guardarla en items'.
+   - Usa 'Note over X: ...' para clarificar por qué empieza una fase.
    Ejemplo válido:
      sequenceDiagram
        participant Player
        participant Inventory
        participant Pokeball
        Note over Player: al iniciar la escena
-       Player->>Pokeball: new()
-       Player->>Inventory: add_item(pokeball)
-       Inventory->>Inventory: items.append(pokeball)
+       Player->>Pokeball: new() para crear el item inicial
+       Player->>Inventory: add_item(pokeball) para guardarla
+       Inventory->>Inventory: items.append(pokeball) para conservarla
        Note over Player: cuando el usuario presiona usar
-       Player->>Inventory: use(0)
-       Inventory->>Pokeball: apply()
-       Pokeball-->>Inventory: print(\"lanzaste pokeball\")
+       Player->>Inventory: use(0) para consumir el primer item
+       Inventory->>Pokeball: apply() para ejecutar su efecto
+       Pokeball-->>Inventory: confirma que lanzó pokeball
 
 REGLAS COMUNES DE MERMAID — PROHIBIDO ROMPER ESTAS:
 - IDs sin espacios (P_ready, I_add). Texto en español va entre [].
@@ -105,7 +114,7 @@ export const overviewSchema: Schema = {
     },
     diagrama_mermaid: {
       type: SchemaType.STRING,
-      description: "Diagrama Mermaid 'flowchart TD' con subgraphs por archivo/clase. Dentro de cada subgraph lista las 2-4 funciones más importantes y las estructuras de datos relevantes. Conecta funciones entre archivos con flechas etiquetadas con '|texto|'.",
+      description: "Diagrama Mermaid 'flowchart TD' con subgraphs por archivo/clase. Dentro de cada subgraph lista 3-6 funciones importantes y estructuras de datos relevantes. Cada flecha debe tener etiqueta '|verbo + propósito|' de 4-10 palabras, explicando para qué se llama o usa esa pieza. Evita etiquetas genéricas como 'usa', 'crea' o 'llama a'.",
     },
     flujo_principal: {
       type: SchemaType.ARRAY,
@@ -173,7 +182,7 @@ export const fileMapSchema: Schema = {
     },
     diagrama_mermaid: {
       type: SchemaType.STRING,
-      description: "Diagrama Mermaid 'sequenceDiagram' (orden temporal de arriba a abajo). Muestra los participants involucrados (Player, Inventory, etc.), las llamadas con sus argumentos reales, y los retornos. Usa 'Note over X: ...' para clarificar fases. CRÍTICO: respeta el orden cronológico real del código.",
+      description: "Diagrama Mermaid 'sequenceDiagram' (orden temporal de arriba a abajo). Muestra participants involucrados, llamadas con argumentos reales y retornos. Cada flecha debe explicar llamada + propósito, por ejemplo 'validateFiles(files) para descartar entradas inválidas'. Usa 'Note over X: ...' para clarificar fases. CRÍTICO: respeta el orden cronológico real del código.",
     },
     flujo_ejecucion: {
       type: SchemaType.ARRAY,

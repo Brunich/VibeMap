@@ -327,6 +327,20 @@ const Mermaid = ({ chart, dense = false }: { chart: string; dense?: boolean }) =
 
 const MAX_FILES_FOR_OVERVIEW = 500
 const MAX_FILES_IN_TREE = 1000
+const MAX_GEMINI_AUTO_RETRIES = 2
+const DEFAULT_GEMINI_RETRY_MS = 6_000
+const MAX_GEMINI_RETRY_MS = 45_000
+
+type ApiErrorPayload = {
+  error?: string
+  retryable?: boolean
+  retryAfterMs?: number
+}
+
+type RetryableRequestError = Error & {
+  retryable?: boolean
+  retryAfterMs?: number
+}
 
 const isBinary = (buffer: Uint8Array): boolean => {
   const checkSize = Math.min(buffer.length, 1024)
@@ -345,6 +359,27 @@ const isIgnoredPath = (path: string): boolean => IGNORED_PATH_RE.test(path)
 
 const errorMessage = (err: unknown, fallback: string): string => {
   return err instanceof Error && err.message ? err.message : fallback
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms))
+
+const apiErrorFromPayload = (payload: ApiErrorPayload, fallback: string): RetryableRequestError => {
+  const err = new Error(payload.error || fallback) as RetryableRequestError
+  err.retryable = payload.retryable
+  err.retryAfterMs = payload.retryAfterMs
+  return err
+}
+
+const shouldAutoRetryGemini = (err: unknown): err is RetryableRequestError => {
+  if (!(err instanceof Error)) return false
+  const maybeRetryable = err as RetryableRequestError
+  if (maybeRetryable.retryable === true) return true
+  return /Gemini|limitando peticiones|sobrecargado|429|503|cuota/i.test(err.message)
+}
+
+const retryDelayFor = (err: RetryableRequestError, attempt: number): number => {
+  const fallback = DEFAULT_GEMINI_RETRY_MS * (attempt + 1)
+  return Math.min(err.retryAfterMs ?? fallback, MAX_GEMINI_RETRY_MS)
 }
 
 const isReadableProjectFile = (file: ProjectFile): boolean => {
@@ -744,58 +779,76 @@ function App() {
     setFileMapErrors({})
 
     try {
-      const response = await fetch('/api/overview-stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: collected }),
-      })
-
-      if (!response.ok || !response.body) {
-        const errData = await response.json().catch(() => ({}))
-        throw new Error(errData.error || 'Error generando el mapa general')
-      }
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let finalOverview: Overview | null = null
-      let streamErr: string | null = null
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const events = buffer.split('\n\n')
-        buffer = events.pop() ?? ''
-        for (const evt of events) {
-          if (!evt.trim()) continue
-          const lines = evt.split('\n')
-          let evtName = 'message'
-          let dataStr = ''
-          for (const line of lines) {
-            if (line.startsWith('event:')) evtName = line.slice(6).trim()
-            else if (line.startsWith('data:')) dataStr += line.slice(5).trim()
+      for (let attempt = 0; attempt <= MAX_GEMINI_AUTO_RETRIES; attempt++) {
+        try {
+          if (attempt > 0) {
+            setStreamingText(`Reintentando con Gemini (${attempt + 1}/${MAX_GEMINI_AUTO_RETRIES + 1})...`)
           }
-          if (!dataStr) continue
-          try {
-            const payload = JSON.parse(dataStr)
-            if (evtName === 'chunk') {
-              setStreamingText(payload.accumulated ?? '')
-            } else if (evtName === 'done') {
-              finalOverview = payload as Overview
-            } else if (evtName === 'error') {
-              streamErr = payload.error ?? 'Error desconocido'
+
+          const response = await fetch('/api/overview-stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files: collected }),
+          })
+
+          if (!response.ok || !response.body) {
+            const errData = (await response.json().catch(() => ({}))) as ApiErrorPayload
+            throw apiErrorFromPayload(errData, 'Error generando el mapa general')
+          }
+
+          const reader = response.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ''
+          let finalOverview: Overview | null = null
+          let streamErr: ApiErrorPayload | null = null
+
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+            const events = buffer.split('\n\n')
+            buffer = events.pop() ?? ''
+            for (const evt of events) {
+              if (!evt.trim()) continue
+              const lines = evt.split('\n')
+              let evtName = 'message'
+              let dataStr = ''
+              for (const line of lines) {
+                if (line.startsWith('event:')) evtName = line.slice(6).trim()
+                else if (line.startsWith('data:')) dataStr += line.slice(5).trim()
+              }
+              if (!dataStr) continue
+              try {
+                const payload = JSON.parse(dataStr)
+                if (evtName === 'chunk') {
+                  setStreamingText(payload.accumulated ?? '')
+                } else if (evtName === 'done') {
+                  finalOverview = payload as Overview
+                } else if (evtName === 'error') {
+                  streamErr = payload as ApiErrorPayload
+                }
+              } catch {
+                /* ignore malformed event */
+              }
             }
-          } catch {
-            /* ignore malformed event */
           }
+
+          if (streamErr) throw apiErrorFromPayload(streamErr, 'Error desconocido')
+          if (!finalOverview) throw new Error('El mapa general nunca se completó.')
+          setOverview(finalOverview)
+          setStreamingText('')
+          return
+        } catch (err: unknown) {
+          if (!shouldAutoRetryGemini(err) || attempt === MAX_GEMINI_AUTO_RETRIES) throw err
+
+          const delayMs = retryDelayFor(err, attempt)
+          const seconds = Math.max(1, Math.ceil(delayMs / 1000))
+          setStreamingText(
+            `Gemini respondió con un límite temporal. Reintento ${attempt + 1} de ${MAX_GEMINI_AUTO_RETRIES} en ${seconds}s...`,
+          )
+          await sleep(delayMs)
         }
       }
-
-      if (streamErr) throw new Error(streamErr)
-      if (!finalOverview) throw new Error('El mapa general nunca se completó.')
-      setOverview(finalOverview)
-      setStreamingText('')
     } catch (err: unknown) {
       setError(errorMessage(err, 'Error inesperado en VibeMap'))
     } finally {
