@@ -1,10 +1,237 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
 @theme {
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-serif: "Playfair Display", "Iowan Old Style", Georgia, serif;
+  --font-rounded: "Outfit", "Inter", system-ui, sans-serif;
+}
+
+:root {
+  --paper: #EFE8D6;
+  --paper-2: #E8E0CB;
+  --canvas: #FAF5E5;
+  --canvas-inset: #F4EEDA;
+  --accent-soft: #F4EFE0;
+  --ink: #18181B;
+  --ink-soft: #3A3935;
+  --muted: #6B6357;
+  --muted-2: #8B8275;
+  --line: #D9CFB8;
+  --line-soft: #E5DDC9;
+  --gold: #A88B4C;
+  --gold-soft: #C9AE74;
+  --accent-deep: #5E3A3A;
+  --rose: #B0584C;
+  --rose-soft: #F3DAD3;
+}
+
+html,
+body {
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100vh;
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 min-h-screen;
+  font-family: var(--font-sans);
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(ellipse 1200px 800px at 20% 10%, rgba(255, 255, 255, 0.5), transparent 60%),
+    radial-gradient(ellipse 1000px 700px at 80% 90%, rgba(168, 139, 76, 0.06), transparent 60%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
 }
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.55  0 0 0 0 0.5  0 0 0 0 0.42  0 0 0 0.08 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  mix-blend-mode: multiply;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg,
+    var(--ink) 0%, var(--ink) 70%,
+    var(--accent-deep) 70%, var(--accent-deep) 88%,
+    var(--gold) 88%, var(--gold) 100%);
+  pointer-events: none;
+  z-index: 50;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+.gallery-card {
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  box-shadow:
+    0 1px 0 rgba(24, 24, 27, 0.015),
+    0 8px 24px -14px rgba(24, 24, 27, 0.06),
+    0 2px 6px -3px rgba(168, 139, 76, 0.05);
+}
+
+.gallery-divider {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.gallery-divider::before,
+.gallery-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.serif {
+  font-family: var(--font-serif);
+}
+
+.smallcaps {
+  font-feature-settings: "smcp", "c2sc";
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.catalog-num {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--gold);
+  font-variant-numeric: oldstyle-nums;
+}
+
+.step-label {
+  font-family: var(--font-rounded);
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.step-label-num {
+  font-family: var(--font-rounded);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--accent-deep);
+  background: var(--canvas-inset);
+  border: 1px solid var(--line);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.row-hover {
+  transition: background-color 200ms ease, border-color 200ms ease;
+}
+
+.row-hover:hover {
+  background-color: var(--accent-soft);
+  border-color: var(--gold-soft);
+}
+
+.corner-ornament {
+  position: fixed;
+  width: 56px;
+  height: 56px;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0.85;
+}
+
+.corner-ornament::before,
+.corner-ornament::after {
+  content: '';
+  position: absolute;
+  background: var(--gold);
+}
+
+.corner-ornament .dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--accent-deep);
+  border-radius: 9999px;
+}
+
+.corner-tl { top: 28px; left: 28px; }
+.corner-tl::before { top: 0; left: 0; width: 56px; height: 1px; }
+.corner-tl::after { top: 0; left: 0; width: 1px; height: 56px; }
+.corner-tl .dot { top: -3px; left: -3px; }
+
+.corner-tr { top: 28px; right: 28px; }
+.corner-tr::before { top: 0; right: 0; width: 56px; height: 1px; }
+.corner-tr::after { top: 0; right: 0; width: 1px; height: 56px; }
+.corner-tr .dot { top: -3px; right: -3px; }
+
+.corner-bl { bottom: 28px; left: 28px; }
+.corner-bl::before { bottom: 0; left: 0; width: 56px; height: 1px; }
+.corner-bl::after { bottom: 0; left: 0; width: 1px; height: 56px; }
+.corner-bl .dot { bottom: -3px; left: -3px; }
+
+.corner-br { bottom: 28px; right: 28px; }
+.corner-br::before { bottom: 0; right: 0; width: 56px; height: 1px; }
+.corner-br::after { bottom: 0; right: 0; width: 1px; height: 56px; }
+.corner-br .dot { bottom: -3px; right: -3px; }
+
+.side-ornament {
+  position: fixed;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  opacity: 0.7;
+}
+
+.side-ornament .mark-line { width: 1px; height: 60px; background: var(--line); }
+.side-ornament .mark-square { width: 8px; height: 8px; border: 1px solid var(--gold); transform: rotate(45deg); }
+.side-ornament .mark-dot { width: 5px; height: 5px; background: var(--accent-deep); border-radius: 9999px; }
+.side-ornament .mark-text {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: var(--font-rounded);
+  font-size: 9px;
+  letter-spacing: 0.4em;
+  color: var(--muted-2);
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+@media (max-width: 900px) {
+  .corner-ornament,
+  .side-ornament {
+    display: none;
+  }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--paper); }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted-2); }
+::selection { background: var(--gold-soft); color: var(--ink); }

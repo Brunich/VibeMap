@@ -169,6 +169,35 @@ export const overviewSchema: Schema = {
   required: ["resumen", "estructura_general", "diagrama_mermaid", "flujo_principal", "archivos", "recapitulacion"],
 };
 
+export const diagramToCodeSchema: Schema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    lenguaje_detectado: {
+      type: SchemaType.STRING,
+      description: "Lenguaje en el que se generó el código. Debe coincidir con el lenguaje objetivo pedido.",
+    },
+    interpretacion: {
+      type: SchemaType.STRING,
+      description: "Qué se entendió del diagrama, en español llano y en orden. Incluye pasos, decisiones y salidas detectadas.",
+    },
+    codigo: {
+      type: SchemaType.STRING,
+      description: "Código fuente listo para copiar y pegar. Sin Markdown ni triple backticks. Debe incluir comentarios breves en el lenguaje pedido que expliquen las decisiones, validaciones y pasos importantes del diagrama.",
+    },
+    supuestos: {
+      type: SchemaType.ARRAY,
+      description: "Cosas asumidas porque el diagrama no las decía explícitamente. Vacío si no hubo supuestos.",
+      items: { type: SchemaType.STRING },
+    },
+    advertencias: {
+      type: SchemaType.ARRAY,
+      description: "Zonas borrosas, ramas ambiguas, símbolos no estándar o posibles errores. Vacío si todo fue claro.",
+      items: { type: SchemaType.STRING },
+    },
+  },
+  required: ["lenguaje_detectado", "interpretacion", "codigo", "supuestos", "advertencias"],
+};
+
 export const fileMapSchema: Schema = {
   type: SchemaType.OBJECT,
   properties: {
@@ -256,6 +285,31 @@ export const fileMapSchema: Schema = {
   ],
 };
 
+const diagramToCodeSystemInstruction = `
+Eres un traductor de diagramas de flujo a código.
+
+Recibes UNA imagen de un diagrama de flujo y un lenguaje objetivo.
+Puede ser una foto de papel, pizarra, o un diagrama exportado de una herramienta.
+
+Tu trabajo:
+1. Leer el diagrama: identifica inicio, fin, procesos, decisiones, entradas/salidas
+   y el orden de las flechas.
+2. Explicar brevemente qué entendiste antes del código, para que el usuario pueda
+   detectar si interpretaste mal alguna rama.
+3. Generar código limpio en el lenguaje pedido que implemente exactamente ese flujo.
+   El código debe venir anotado con comentarios breves y útiles en el propio lenguaje:
+   explica las decisiones, validaciones, contadores, bloqueos, retornos y salidas.
+
+Reglas:
+- Respeta el orden real del diagrama.
+- Si una rama no tiene etiqueta clara, explica el supuesto.
+- Si la imagen es ilegible, devuelve un código mínimo con un comentario indicando el problema.
+- No inventes pasos que no estén en el diagrama.
+- El campo "codigo" no debe contener Markdown ni triple backticks.
+- Los comentarios deben ser concisos; no comentes cada línea obvia, solo los pasos que ayudan
+  a entender cómo el código implementa el flowchart.
+`.trim();
+
 export const overviewModel = genAI.getGenerativeModel({
   model: "gemini-2.5-flash",
   systemInstruction: baseSystemInstruction,
@@ -273,6 +327,16 @@ export const fileMapModel = genAI.getGenerativeModel({
     responseMimeType: "application/json",
     responseSchema: fileMapSchema,
     temperature: 0.4,
+  },
+});
+
+export const diagramToCodeModel = genAI.getGenerativeModel({
+  model: "gemini-2.5-flash",
+  systemInstruction: diagramToCodeSystemInstruction,
+  generationConfig: {
+    responseMimeType: "application/json",
+    responseSchema: diagramToCodeSchema,
+    temperature: 0.2,
   },
 });
 
