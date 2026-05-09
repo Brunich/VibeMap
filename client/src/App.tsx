@@ -967,18 +967,37 @@ function App() {
 
             <div className="flex flex-wrap justify-center gap-3 pt-4">
               <label
-                htmlFor="project-folder-input"
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10 cursor-pointer"
+                className="relative inline-flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10 cursor-pointer overflow-hidden"
               >
+                <input
+                  type="file"
+                  multiple
+                  // @ts-expect-error — webkitdirectory no está en los tipos estándar
+                  webkitdirectory=""
+                  directory=""
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  onChange={(e) => {
+                    handlePickedFiles(e.target.files)
+                    e.target.value = ''
+                  }}
+                />
                 <span>📁</span>
                 <span>Elegir carpeta</span>
               </label>
               <label
-                htmlFor="project-files-input"
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-white text-slate-800 border-2 border-slate-200 rounded-2xl font-bold text-sm hover:border-indigo-400 hover:text-indigo-600 transition-colors cursor-pointer"
+                className="relative inline-flex items-center gap-2 px-6 py-3 bg-white text-slate-800 border-2 border-slate-200 rounded-2xl font-bold text-sm hover:border-indigo-400 hover:text-indigo-600 transition-colors cursor-pointer overflow-hidden"
               >
+                <input
+                  type="file"
+                  multiple
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  onChange={(e) => {
+                    handlePickedFiles(e.target.files)
+                    e.target.value = ''
+                  }}
+                />
                 <span>📄</span>
                 <span>Elegir archivos sueltos</span>
               </label>
@@ -992,29 +1011,6 @@ function App() {
             </p>
           </div>
 
-          <input
-            id="project-folder-input"
-            type="file"
-            multiple
-            // @ts-expect-error — webkitdirectory no está en los tipos estándar
-            webkitdirectory=""
-            directory=""
-            className="sr-only"
-            onChange={(e) => {
-              handlePickedFiles(e.target.files)
-              e.target.value = ''
-            }}
-          />
-          <input
-            id="project-files-input"
-            type="file"
-            multiple
-            className="sr-only"
-            onChange={(e) => {
-              handlePickedFiles(e.target.files)
-              e.target.value = ''
-            }}
-          />
         </section>
 
         {loading && (
