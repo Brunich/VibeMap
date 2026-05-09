@@ -301,8 +301,9 @@ const Mermaid = ({ chart, dense = false }: { chart: string; dense?: boolean }) =
     <div
       ref={ref}
       className={`
-        flex justify-center overflow-x-auto bg-white rounded-3xl border border-slate-100 shadow-sm
-        ${dense ? 'p-3 my-0' : 'p-6 my-2'}
+        flex justify-start overflow-auto bg-white rounded-3xl border border-slate-100 shadow-sm
+        [&_svg]:max-w-none [&_svg]:h-auto
+        ${dense ? 'p-4 my-0 min-h-[360px]' : 'p-8 my-2 min-h-[560px]'}
       `}
     />
   )
@@ -322,6 +323,10 @@ const IGNORED_PATH_RE =
   /(^|\/)(node_modules|\.git|dist|build|bin|obj|\.next|\.cache|\.import|\.godot|\.turbo|\.svelte-kit|target|out)(\/|$)/
 
 const isIgnoredPath = (path: string): boolean => IGNORED_PATH_RE.test(path)
+
+const errorMessage = (err: unknown, fallback: string): string => {
+  return err instanceof Error && err.message ? err.message : fallback
+}
 
 const readSingleFile = async (file: File, path: string): Promise<ProjectFile> => {
   if (file.size > 1024 * 1024 * 10) {
@@ -357,7 +362,7 @@ const readEntry = async (entry: FileSystemEntry): Promise<ProjectFile[]> => {
     const reader = dirEntry.createReader()
     const readAll = async () => {
       let all: FileSystemEntry[] = []
-      let batch: FileSystemEntry[] = []
+      let batch: FileSystemEntry[]
       do {
         batch = await new Promise<FileSystemEntry[]>((resolve) => {
           reader.readEntries(resolve, () => resolve([]))
@@ -469,6 +474,10 @@ function FileMapDetail({
               Explicación con ejemplo
             </div>
             <p className="text-lg text-slate-800 leading-relaxed">{fileMap.explicacion}</p>
+            <p className="text-sm text-slate-500 leading-relaxed mt-3">
+              Lee el diagrama de arriba hacia abajo: cada flecha representa una llamada o paso real
+              dentro del archivo, y las notas marcan momentos importantes del flujo.
+            </p>
           </div>
 
           {fileMap.estructura && (
@@ -482,7 +491,7 @@ function FileMapDetail({
             </div>
           )}
 
-          <div className="grid xl:grid-cols-2 gap-6 items-start">
+          <div className="grid 2xl:grid-cols-[minmax(320px,0.8fr)_minmax(640px,1.2fr)] gap-6 items-start">
             <div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
                 Cómo funciona, paso a paso
@@ -506,6 +515,10 @@ function FileMapDetail({
               <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
                 Diagrama de secuencia
               </div>
+              <p className="text-xs text-slate-500 leading-relaxed mb-3">
+                Este mapa muestra el orden de ejecución dentro del archivo seleccionado: quién llama a quién,
+                en qué momento ocurre y qué piezas externas participan.
+              </p>
               <Mermaid chart={fileMap.diagrama_mermaid} />
             </div>
           </div>
@@ -736,8 +749,8 @@ function App() {
       if (!finalOverview) throw new Error('El mapa general nunca se completó.')
       setOverview(finalOverview)
       setStreamingText('')
-    } catch (err: any) {
-      setError(err?.message || 'Error inesperado en VibeMap')
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Error inesperado en VibeMap'))
     } finally {
       setLoading(false)
     }
@@ -797,8 +810,8 @@ function App() {
       }
 
       await startProcessing(collected)
-    } catch (err: any) {
-      setError(err?.message || 'Error inesperado en VibeMap')
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Error inesperado en VibeMap'))
       setLoading(false)
     }
   }, [startProcessing])
@@ -819,8 +832,8 @@ function App() {
         }),
       )
       await startProcessing(collected)
-    } catch (err: any) {
-      setError(err?.message || 'Error inesperado leyendo archivos')
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Error inesperado leyendo archivos'))
       setLoading(false)
     }
   }, [startProcessing])
@@ -845,8 +858,9 @@ function App() {
 
       setFileMapLoading((p) => ({ ...p, [ruta]: true }))
       setFileMapErrors((p) => {
-        const { [ruta]: _, ...rest } = p
-        return rest
+        const next = { ...p }
+        delete next[ruta]
+        return next
       })
 
       try {
@@ -865,8 +879,8 @@ function App() {
         }
         const data: FileMap = await response.json()
         setFileMaps((p) => ({ ...p, [ruta]: data }))
-      } catch (err: any) {
-        setFileMapErrors((p) => ({ ...p, [ruta]: err?.message || 'Error inesperado' }))
+      } catch (err: unknown) {
+        setFileMapErrors((p) => ({ ...p, [ruta]: errorMessage(err, 'Error inesperado') }))
       } finally {
         setFileMapLoading((p) => ({ ...p, [ruta]: false }))
       }
@@ -892,7 +906,7 @@ function App() {
       setTreeSelectedPath(node.path)
       ensureFileMap(node.path)
       setTimeout(() => {
-        document.getElementById('tree-detail-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        document.getElementById('diagram-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }, 60)
     },
     [ensureFileMap],
@@ -1062,94 +1076,186 @@ function App() {
 
         {overview && (
           <>
-            <section className="bg-white rounded-[3rem] shadow-[0_30px_60px_-16px_rgba(0,0,0,0.08)] border border-slate-50 overflow-hidden">
-              <div className="bg-slate-950 px-10 py-6 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="flex space-x-2">
-                    <div className="w-3 h-3 rounded-full bg-slate-800"></div>
-                    <div className="w-3 h-3 rounded-full bg-slate-800"></div>
-                    <div className="w-3 h-3 rounded-full bg-slate-800"></div>
+            {tree.length > 0 && (
+              <section className="grid xl:grid-cols-[340px_minmax(0,1fr)] gap-8 items-start">
+                <aside className="bg-white border border-slate-100 rounded-3xl p-6 xl:sticky xl:top-6 xl:self-start xl:max-h-[calc(100vh-3rem)] xl:overflow-y-auto shadow-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-black tracking-tight text-slate-900">Explorador</h2>
+                    <span className="text-[10px] uppercase tracking-widest font-bold text-slate-400">
+                      {totalFilesInTree} archivos
+                    </span>
                   </div>
-                  <div className="h-6 w-px bg-slate-800 mx-2"></div>
-                  <span className="text-indigo-400 font-mono text-xs font-bold tracking-[0.4em] uppercase">
-                    Mapa General
-                  </span>
-                </div>
-                <div className="px-3 py-1 bg-indigo-500/10 rounded-full border border-indigo-500/20">
-                  <span className="text-indigo-400 text-xs font-black uppercase tracking-widest">
-                    {fileCount} archivos
-                  </span>
-                </div>
-              </div>
-              <div className="p-10 space-y-8">
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
-                    De qué va el proyecto
-                  </div>
-                  <p className="text-2xl text-slate-800 leading-relaxed font-medium">{overview.resumen}</p>
-                </div>
-                {overview.estructura_general && (
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
-                      Estructura general
+                  <button
+                    type="button"
+                    onClick={() => setTreeSelectedPath(null)}
+                    className={`w-full text-left rounded-2xl border px-4 py-3 mb-4 transition-colors ${
+                      treeSelectedPath === null
+                        ? 'border-indigo-200 bg-indigo-50 text-indigo-950'
+                        : 'border-slate-100 bg-slate-50/70 text-slate-700 hover:border-indigo-200'
+                    }`}
+                  >
+                    <div className="text-[10px] font-black uppercase tracking-widest text-indigo-600 mb-1">
+                      Vista principal
                     </div>
-                    <p className="text-base text-slate-700 font-mono bg-slate-100/60 inline-block px-4 py-2 rounded-xl">
-                      {overview.estructura_general}
-                    </p>
+                    <div className="font-bold">Mapa general del proyecto</div>
+                    <div className="text-xs text-slate-500 mt-1">Arquitectura, flujo completo y conexiones.</div>
+                  </button>
+                  <input
+                    type="search"
+                    value={treeSearch}
+                    onChange={(e) => setTreeSearch(e.target.value)}
+                    placeholder="Buscar archivo o carpeta…"
+                    className="w-full text-sm px-3 py-2 mb-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
+                  />
+                  <div className="-mx-2">
+                    {tree.map((node) => (
+                      <FileTreeNode
+                        key={node.path}
+                        node={node}
+                        depth={0}
+                        selectedPath={treeSelectedPath}
+                        expanded={treeExpandedFolders}
+                        toggleFolder={toggleFolder}
+                        onSelectFile={handleSelectFromTree}
+                        search={treeSearch}
+                      />
+                    ))}
                   </div>
-                )}
-                <div className="grid lg:grid-cols-2 gap-6 items-start">
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
-                      Flujo principal, paso a paso
-                    </div>
-                    {overview.flujo_principal && overview.flujo_principal.length > 0 ? (
-                      <ol className="space-y-3">
-                        {overview.flujo_principal.map((p) => (
-                          <li
-                            key={p.paso}
-                            className="flex gap-3 bg-slate-50/80 border border-slate-100 rounded-2xl p-3"
-                          >
-                            <span className="shrink-0 w-8 h-8 rounded-xl bg-indigo-600 text-white font-black text-sm flex items-center justify-center">
-                              {p.paso}
-                            </span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-slate-800 leading-relaxed text-sm">{p.accion}</p>
-                              {p.archivos.length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-2">
-                                  {p.archivos.map((ruta) => (
-                                    <code
-                                      key={ruta}
-                                      className="text-[10px] font-mono bg-white text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded-md"
-                                    >
-                                      {ruta}
-                                    </code>
-                                  ))}
+                  <p className="text-[11px] text-slate-400 mt-4 leading-relaxed">
+                    Selecciona un archivo para cambiar el visor al diagrama específico. Los grises son binarios o vacíos.
+                  </p>
+                </aside>
+
+                <section id="diagram-workspace" className="min-w-0 bg-white rounded-[3rem] shadow-[0_30px_60px_-16px_rgba(0,0,0,0.08)] border border-slate-50 overflow-hidden">
+                  {!treeSelectedPath ? (
+                    <>
+                      <div className="bg-slate-950 px-8 py-6 flex flex-wrap items-center justify-between gap-4">
+                        <div>
+                          <div className="text-indigo-400 font-mono text-xs font-bold tracking-[0.35em] uppercase mb-2">
+                            Mapa General
+                          </div>
+                          <h2 className="text-2xl font-black text-white tracking-tight">Cómo se conecta todo</h2>
+                        </div>
+                        <div className="px-3 py-1 bg-indigo-500/10 rounded-full border border-indigo-500/20">
+                          <span className="text-indigo-300 text-xs font-black uppercase tracking-widest">
+                            {fileCount} archivos
+                          </span>
+                        </div>
+                      </div>
+                      <div className="p-8 lg:p-10 space-y-8">
+                        <div className="grid 2xl:grid-cols-[minmax(0,0.85fr)_minmax(680px,1.25fr)] gap-8 items-start">
+                          <div className="space-y-6">
+                            <div>
+                              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                                De qué va el proyecto
+                              </div>
+                              <p className="text-2xl text-slate-800 leading-relaxed font-medium">{overview.resumen}</p>
+                            </div>
+                            {overview.estructura_general && (
+                              <div>
+                                <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                                  Estructura general
                                 </div>
+                                <p className="text-base text-slate-700 font-mono bg-slate-100/60 inline-block px-4 py-2 rounded-xl">
+                                  {overview.estructura_general}
+                                </p>
+                              </div>
+                            )}
+                            <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4">
+                              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 mb-2">
+                                Cómo leer este diagrama
+                              </div>
+                              <p className="text-sm text-slate-700 leading-relaxed">
+                                Cada bloque agrupa funciones o datos de un archivo. Las flechas explican qué pieza llama,
+                                usa o crea a otra. Úsalo como mapa de navegación: primero ubica los archivos grandes,
+                                luego sigue las flechas para entender el flujo real del programa.
+                              </p>
+                            </div>
+                            <div>
+                              <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
+                                Flujo principal, paso a paso
+                              </div>
+                              {overview.flujo_principal && overview.flujo_principal.length > 0 ? (
+                                <ol className="space-y-3">
+                                  {overview.flujo_principal.map((p) => (
+                                    <li
+                                      key={p.paso}
+                                      className="flex gap-3 bg-slate-50/80 border border-slate-100 rounded-2xl p-3"
+                                    >
+                                      <span className="shrink-0 w-8 h-8 rounded-xl bg-indigo-600 text-white font-black text-sm flex items-center justify-center">
+                                        {p.paso}
+                                      </span>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-slate-800 leading-relaxed text-sm">{p.accion}</p>
+                                        {p.archivos.length > 0 && (
+                                          <div className="flex flex-wrap gap-1 mt-2">
+                                            {p.archivos.map((ruta) => (
+                                              <code
+                                                key={ruta}
+                                                className="text-[10px] font-mono bg-white text-slate-500 border border-slate-200 px-1.5 py-0.5 rounded-md"
+                                              >
+                                                {ruta}
+                                              </code>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ol>
+                              ) : (
+                                <p className="text-sm text-slate-400 italic">No se generó flujo numerado.</p>
                               )}
                             </div>
-                          </li>
-                        ))}
-                      </ol>
-                    ) : (
-                      <p className="text-sm text-slate-400 italic">No se generó flujo numerado.</p>
-                    )}
-                  </div>
-                  <div className="lg:sticky lg:top-6">
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
-                      Cómo se conecta todo
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
+                              Diagrama principal
+                            </div>
+                            <Mermaid chart={overview.diagrama_mermaid} />
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="p-8 lg:p-10 space-y-6">
+                      <div className="flex items-center justify-between gap-4 pb-5 border-b border-slate-100">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
+                            Diagrama específico
+                          </div>
+                          <code className="text-base font-mono text-slate-900 break-all">
+                            {treeSelectedPath}
+                          </code>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setTreeSelectedPath(null)}
+                          className="shrink-0 text-slate-400 hover:text-slate-700 text-sm font-medium"
+                        >
+                          Cerrar ✕
+                        </button>
+                      </div>
+                      {!selectedTreeFile ? (
+                        <p className="text-rose-700 text-sm">Archivo no encontrado en el upload.</p>
+                      ) : (
+                        <FileMapDetail
+                          fileMap={fileMaps[treeSelectedPath] ?? null}
+                          loading={!!fileMapLoading[treeSelectedPath]}
+                          error={fileMapErrors[treeSelectedPath] ?? null}
+                        />
+                      )}
                     </div>
-                    <Mermaid chart={overview.diagrama_mermaid} />
-                  </div>
-                </div>
-              </div>
-            </section>
+                  )}
+                </section>
+              </section>
+            )}
 
             <section>
               <div className="flex items-end justify-between mb-4 px-2">
-                <h2 className="text-2xl font-black tracking-tight text-slate-900">Archivos del proyecto</h2>
+                <h2 className="text-2xl font-black tracking-tight text-slate-900">Archivos recomendados</h2>
                 <p className="text-sm text-slate-400 font-medium">
-                  Click para ver el mapa de cada uno
+                  Atajos a los archivos que Gemini marcó como importantes
                 </p>
               </div>
               <div className="space-y-3">
@@ -1185,86 +1291,6 @@ function App() {
                     </li>
                   ))}
                 </ul>
-              </section>
-            )}
-
-            {tree.length > 0 && (
-              <section className="grid lg:grid-cols-[320px_1fr] gap-8">
-                <div className="bg-white border border-slate-100 rounded-3xl p-6 lg:sticky lg:top-6 lg:self-start lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-black tracking-tight text-slate-900">Explorar todo</h2>
-                    <span className="text-[10px] uppercase tracking-widest font-bold text-slate-400">
-                      {totalFilesInTree} archivos
-                    </span>
-                  </div>
-                  <input
-                    type="search"
-                    value={treeSearch}
-                    onChange={(e) => setTreeSearch(e.target.value)}
-                    placeholder="Buscar archivo o carpeta…"
-                    className="w-full text-sm px-3 py-2 mb-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
-                  />
-                  <div className="-mx-2">
-                    {tree.map((node) => (
-                      <FileTreeNode
-                        key={node.path}
-                        node={node}
-                        depth={0}
-                        selectedPath={treeSelectedPath}
-                        expanded={treeExpandedFolders}
-                        toggleFolder={toggleFolder}
-                        onSelectFile={handleSelectFromTree}
-                        search={treeSearch}
-                      />
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-4 leading-relaxed">
-                    Click un archivo para generar su mapa. Los grises son binarios o vacíos.
-                  </p>
-                </div>
-
-                <div id="tree-detail-panel" className="min-w-0">
-                  {!treeSelectedPath ? (
-                    <div className="bg-slate-50/60 border border-dashed border-slate-200 rounded-3xl p-12 text-center">
-                      <div className="text-5xl mb-4">📂</div>
-                      <h3 className="text-xl font-black text-slate-700 mb-2">Elige cualquier archivo del árbol</h3>
-                      <p className="text-slate-500 text-sm leading-relaxed max-w-md mx-auto">
-                        Aquí aparecerá su mapa de secuencia, el flujo paso a paso, y las funciones
-                        que define y que usa de fuera. Funciona con cualquier archivo, no solo los
-                        marcados como importantes.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="bg-white border border-slate-100 rounded-3xl p-8 space-y-5">
-                      <div className="flex items-center justify-between gap-4 pb-5 border-b border-slate-100">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
-                            Archivo seleccionado
-                          </div>
-                          <code className="text-base font-mono text-slate-900 break-all">
-                            {treeSelectedPath}
-                          </code>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setTreeSelectedPath(null)}
-                          className="shrink-0 text-slate-400 hover:text-slate-700 text-sm font-medium"
-                        >
-                          Cerrar ✕
-                        </button>
-                      </div>
-                      {!selectedTreeFile ? (
-                        <p className="text-rose-700 text-sm">Archivo no encontrado en el upload.</p>
-                      ) : (
-                        <FileMapDetail
-                          fileMap={fileMaps[treeSelectedPath] ?? null}
-                          loading={!!fileMapLoading[treeSelectedPath]}
-                          error={fileMapErrors[treeSelectedPath] ?? null}
-                        />
-                      )}
-                    </div>
-                  )}
-                </div>
               </section>
             )}
           </>
