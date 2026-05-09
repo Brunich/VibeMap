@@ -816,9 +816,6 @@ function App() {
     }
   }, [startProcessing])
 
-  const folderInputRef = useRef<HTMLInputElement>(null)
-  const filesInputRef = useRef<HTMLInputElement>(null)
-
   const handlePickedFiles = useCallback(async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return
     try {
@@ -969,28 +966,22 @@ function App() {
             </div>
 
             <div className="flex flex-wrap justify-center gap-3 pt-4">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  folderInputRef.current?.click()
-                }}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10"
+              <label
+                htmlFor="project-folder-input"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10 cursor-pointer"
               >
                 <span>📁</span>
                 <span>Elegir carpeta</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  filesInputRef.current?.click()
-                }}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-white text-slate-800 border-2 border-slate-200 rounded-2xl font-bold text-sm hover:border-indigo-400 hover:text-indigo-600 transition-colors"
+              </label>
+              <label
+                htmlFor="project-files-input"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-white text-slate-800 border-2 border-slate-200 rounded-2xl font-bold text-sm hover:border-indigo-400 hover:text-indigo-600 transition-colors cursor-pointer"
               >
                 <span>📄</span>
                 <span>Elegir archivos sueltos</span>
-              </button>
+              </label>
             </div>
 
             <p className="text-[11px] text-slate-400 pt-2">
@@ -1002,23 +993,23 @@ function App() {
           </div>
 
           <input
-            ref={folderInputRef}
+            id="project-folder-input"
             type="file"
             multiple
             // @ts-expect-error — webkitdirectory no está en los tipos estándar
             webkitdirectory=""
             directory=""
-            className="hidden"
+            className="sr-only"
             onChange={(e) => {
               handlePickedFiles(e.target.files)
               e.target.value = ''
             }}
           />
           <input
-            ref={filesInputRef}
+            id="project-files-input"
             type="file"
             multiple
-            className="hidden"
+            className="sr-only"
             onChange={(e) => {
               handlePickedFiles(e.target.files)
               e.target.value = ''
