@@ -376,21 +376,43 @@ app.post("/api/overview-stream", apiLimit, async (req, res) => {
 
     const prompt = buildOverviewPrompt(validation.files);
     const stream = await withRetry(() => streamingOverviewModel.generateContentStream(prompt));
+    let streamResponseError: unknown;
+    const streamResponse = stream.response.catch((err) => {
+      streamResponseError = err;
+      console.error("[overview-stream] response promise failed:", err);
+      return null;
+    });
 
     let accumulated = "";
-    for await (const chunk of stream.stream) {
-      const piece = chunk.text();
-      if (piece) {
-        accumulated += piece;
-        res.write(`event: chunk\ndata: ${JSON.stringify({ piece, accumulated })}\n\n`);
+    try {
+      for await (const chunk of stream.stream) {
+        try {
+          const piece = chunk.text();
+          if (piece) {
+            accumulated += piece;
+            res.write(`event: chunk\ndata: ${JSON.stringify({ piece, accumulated })}\n\n`);
+          }
+        } catch (chunkErr) {
+          console.warn("[overview-stream] chunk read failed:", chunkErr);
+        }
       }
+    } catch (streamErr) {
+      console.error("[overview-stream] iterator error:", streamErr);
+      if (accumulated.length === 0) throw streamErr;
+      // si ya tenemos contenido parcial, intentamos parsearlo igual
+    }
+
+    const finalResponse = await streamResponse;
+    const finalText = finalResponse?.text() || accumulated;
+    if (!finalText.trim() && streamResponseError) {
+      throw streamResponseError;
     }
 
     let parsed;
     try {
-      parsed = JSON.parse(accumulated);
+      parsed = JSON.parse(finalText);
     } catch {
-      console.error("[overview-stream] Final parse failed. Raw:", accumulated.slice(0, 500));
+      console.error("[overview-stream] Final parse failed. Raw:", finalText.slice(0, 500));
       res.write(`event: error\ndata: ${JSON.stringify({ error: "Respuesta de IA inválida" })}\n\n`);
       res.end();
       return;
@@ -443,6 +465,14 @@ app.post("/api/file-map", apiLimit, async (req, res) => {
     const { status, userMessage } = describeGeminiError(err);
     res.status(status).json({ error: userMessage });
   }
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
 });
 
 app.listen(port, () => {
