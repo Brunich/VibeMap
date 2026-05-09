@@ -1,0 +1,20 @@
+{
+  "files": [
+    {
+      "path": "src/Player.gd",
+      "content": "extends CharacterBody2D\nclass_name Player\n\nvar inventory: Inventory = Inventory.new()\nvar health: int = 100\n\nfunc _ready():\n  inventory.add_item(Pokeball.new())\n\nfunc use_item(item_id: int):\n  inventory.use(item_id)\n"
+    },
+    {
+      "path": "src/Inventory.gd",
+      "content": "extends Resource\nclass_name Inventory\n\nvar items: Array[Item] = []\n\nfunc add_item(item: Item):\n  items.append(item)\n\nfunc use(id: int):\n  if id < items.size():\n    items[id].apply()\n    items.remove_at(id)\n"
+    },
+    {
+      "path": "src/Item.gd",
+      "content": "extends Resource\nclass_name Item\n\nvar nombre: String = \"\"\nvar tipo: String = \"\"\n\nfunc apply():\n  pass\n"
+    },
+    {
+      "path": "src/Pokeball.gd",
+      "content": "extends Item\nclass_name Pokeball\n\nfunc _init():\n  nombre = \"Pokeball\"\n  tipo = \"captura\"\n\nfunc apply():\n  print(\"Lanzaste una Pokeball!\")\n"
+    }
+  ]
+}

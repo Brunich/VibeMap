@@ -1,6 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { useDropzone } from 'react-dropzone'
-import ReactMarkdown from 'react-markdown'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useDropzone, type FileRejection, type DropEvent } from 'react-dropzone'
 import mermaid from 'mermaid'
 
 mermaid.initialize({
@@ -9,287 +8,690 @@ mermaid.initialize({
   securityLevel: 'strict',
 })
 
+type ProjectFile = { path: string; content: string }
+
+type OverviewArchivo = {
+  ruta: string
+  rol: string
+  importancia: 'alta' | 'media' | 'baja'
+}
+
+type Overview = {
+  resumen: string
+  estructura_general: string
+  diagrama_mermaid: string
+  archivos: OverviewArchivo[]
+  recapitulacion: string[]
+}
+
+type FuncionInfo = {
+  real: string
+  humana: string
+  llama_a: string[]
+}
+
+type FileMap = {
+  explicacion: string
+  estructura: string
+  diagrama_mermaid: string
+  funciones: FuncionInfo[]
+  puntos_clave: string[]
+  resumen_archivo: string
+}
+
 const Mermaid = ({ chart }: { chart: string }) => {
   const ref = useRef<HTMLDivElement>(null)
   const [renderError, setRenderError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!ref.current) return
+    if (!ref.current || !chart) return
     setRenderError(null)
     const id = `mermaid-${crypto.randomUUID()}`
-    mermaid.render(id, chart).then(({ svg }) => {
-      if (ref.current) ref.current.innerHTML = svg
-    }).catch(err => {
-      console.error("Mermaid render error:", err)
-      setRenderError('Sintaxis inválida en el diagrama')
-    })
+    mermaid
+      .render(id, chart)
+      .then(({ svg }) => {
+        if (ref.current) ref.current.innerHTML = svg
+      })
+      .catch((err) => {
+        console.error('Mermaid render error:', err)
+        setRenderError('Sintaxis inválida en el diagrama')
+      })
   }, [chart])
 
   if (renderError) {
     return (
-      <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono text-slate-500">
-        Error en diagrama: {renderError}
+      <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-sm font-mono text-amber-700">
+        ⚠️ {renderError}
+        <pre className="mt-2 text-xs whitespace-pre-wrap text-amber-900/70">{chart}</pre>
       </div>
     )
   }
 
-  return <div ref={ref} className="flex justify-center my-12 overflow-x-auto p-4 bg-white rounded-3xl border border-slate-50 shadow-sm" />
+  return (
+    <div
+      ref={ref}
+      className="flex justify-center my-6 overflow-x-auto p-4 bg-white rounded-3xl border border-slate-100 shadow-sm"
+    />
+  )
+}
+
+const isBinary = (buffer: Uint8Array): boolean => {
+  const checkSize = Math.min(buffer.length, 1024)
+  let nonPrintable = 0
+  for (let i = 0; i < checkSize; i++) {
+    if (buffer[i] === 0) return true
+    if (buffer[i]! < 32 && ![9, 10, 13].includes(buffer[i]!)) nonPrintable++
+  }
+  return nonPrintable / checkSize > 0.3
+}
+
+const readEntry = async (entry: FileSystemEntry): Promise<ProjectFile[]> => {
+  if (entry.isFile) {
+    const fileEntry = entry as FileSystemFileEntry
+    return new Promise((resolve) => {
+      fileEntry.file(async (file) => {
+        try {
+          if (file.size > 1024 * 1024 * 10) {
+            resolve([{ path: entry.fullPath, content: '[CONTENIDO OMITIDO: ARCHIVO MAYOR A 10MB]' }])
+            return
+          }
+          const arrayBuffer = await file.arrayBuffer()
+          const uint8 = new Uint8Array(arrayBuffer)
+          if (isBinary(uint8)) {
+            resolve([{ path: entry.fullPath, content: '[ARCHIVO BINARIO O MULTIMEDIA]' }])
+            return
+          }
+          const decoder = new TextDecoder('utf-8', { fatal: false })
+          resolve([{ path: entry.fullPath, content: decoder.decode(uint8) }])
+        } catch (err) {
+          console.error(`Error leyendo ${entry.fullPath}:`, err)
+          resolve([{ path: entry.fullPath, content: '[ERROR DE LECTURA]' }])
+        }
+      })
+    })
+  } else if (entry.isDirectory) {
+    const dirEntry = entry as FileSystemDirectoryEntry
+    const reader = dirEntry.createReader()
+    const readAll = async () => {
+      let all: FileSystemEntry[] = []
+      let batch: FileSystemEntry[] = []
+      do {
+        batch = await new Promise<FileSystemEntry[]>((resolve) => {
+          reader.readEntries(resolve, () => resolve([]))
+        })
+        all = all.concat(batch)
+      } while (batch.length > 0)
+      return all
+    }
+    const entries = await readAll()
+    const filtered = entries.filter(
+      (e) =>
+        !['node_modules', '.git', 'dist', '.import', '.godot', 'build', 'bin', 'obj', '.next', '.cache'].includes(
+          e.name,
+        ),
+    )
+    const results = await Promise.all(filtered.map((e) => readEntry(e)))
+    return results.flat()
+  }
+  return []
+}
+
+const importanciaStyles: Record<OverviewArchivo['importancia'], string> = {
+  alta: 'bg-indigo-50 text-indigo-700 ring-indigo-100',
+  media: 'bg-slate-100 text-slate-600 ring-slate-200',
+  baja: 'bg-slate-50 text-slate-400 ring-slate-100',
+}
+
+function FileCard({
+  archivo,
+  onExpand,
+  expanded,
+  fileMap,
+  loading,
+  error,
+}: {
+  archivo: OverviewArchivo
+  onExpand: () => void
+  expanded: boolean
+  fileMap: FileMap | null
+  loading: boolean
+  error: string | null
+}) {
+  return (
+    <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden transition-shadow hover:shadow-md">
+      <button
+        type="button"
+        onClick={onExpand}
+        className="w-full text-left px-6 py-5 flex items-start justify-between gap-4 group"
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3 mb-2">
+            <span
+              className={`text-[10px] uppercase tracking-widest font-bold px-2 py-0.5 rounded-full ring-1 ${importanciaStyles[archivo.importancia]}`}
+            >
+              {archivo.importancia}
+            </span>
+            <code className="text-sm font-mono text-slate-500 truncate">{archivo.ruta}</code>
+          </div>
+          <p className="text-base text-slate-800 font-medium leading-snug">{archivo.rol}</p>
+        </div>
+        <div className="text-slate-300 group-hover:text-indigo-500 transition-colors mt-1">
+          <svg
+            className={`w-5 h-5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-100 px-6 py-6 bg-slate-50/40 space-y-5">
+          {loading && (
+            <div className="flex items-center gap-3 text-slate-500 text-sm">
+              <div className="flex gap-1">
+                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" />
+              </div>
+              Generando mapa de este archivo…
+            </div>
+          )}
+
+          {error && (
+            <div className="text-rose-700 text-sm bg-rose-50 border border-rose-100 rounded-xl p-3">
+              ⚠️ {error}
+            </div>
+          )}
+
+          {fileMap && (
+            <>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
+                  Explicación con ejemplo
+                </div>
+                <p className="text-lg text-slate-800 leading-relaxed">{fileMap.explicacion}</p>
+              </div>
+
+              {fileMap.estructura && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
+                    Estructura usada
+                  </div>
+                  <p className="text-sm text-slate-700 font-mono bg-slate-100/60 inline-block px-3 py-1.5 rounded-xl">
+                    {fileMap.estructura}
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
+                  Flujo interno
+                </div>
+                <Mermaid chart={fileMap.diagrama_mermaid} />
+              </div>
+
+              {fileMap.funciones.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                    Funciones del archivo
+                  </div>
+                  <div className="overflow-hidden rounded-2xl border border-slate-100">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-100/70 text-slate-600 text-xs uppercase tracking-wider">
+                        <tr>
+                          <th className="text-left font-bold px-4 py-2">Nombre real</th>
+                          <th className="text-left font-bold px-4 py-2">Qué hace y cuándo</th>
+                          <th className="text-left font-bold px-4 py-2">Llama a</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {fileMap.funciones.map((fn) => (
+                          <tr key={fn.real}>
+                            <td className="px-4 py-2 font-mono text-indigo-700 align-top whitespace-nowrap">{fn.real}</td>
+                            <td className="px-4 py-2 text-slate-700 align-top">{fn.humana}</td>
+                            <td className="px-4 py-2 align-top">
+                              {fn.llama_a.length === 0 ? (
+                                <span className="text-slate-300">—</span>
+                              ) : (
+                                <div className="flex flex-wrap gap-1">
+                                  {fn.llama_a.map((c) => (
+                                    <code
+                                      key={c}
+                                      className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md"
+                                    >
+                                      {c}
+                                    </code>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {fileMap.puntos_clave.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                    Puntos clave
+                  </div>
+                  <ul className="space-y-1.5">
+                    {fileMap.puntos_clave.map((p, i) => (
+                      <li key={i} className="flex items-start gap-2 text-slate-700 text-sm">
+                        <span className="text-indigo-400 mt-1">●</span>
+                        <span>{p}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {fileMap.resumen_archivo && (
+                <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 mb-1">
+                    En resumen
+                  </div>
+                  <p className="text-slate-800 text-sm font-medium">{fileMap.resumen_archivo}</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function App() {
-  const [result, setResult] = useState<string | null>(null)
+  const [overview, setOverview] = useState<Overview | null>(null)
+  const [streamingText, setStreamingText] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fileCount, setFileCount] = useState<number>(0)
-  const [analyzedFiles, setAnalyzedFiles] = useState<string[]>([])
+  const [files, setFiles] = useState<ProjectFile[]>([])
+  const [expandedPath, setExpandedPath] = useState<string | null>(null)
+  const [fileMaps, setFileMaps] = useState<Record<string, FileMap>>({})
+  const [fileMapLoading, setFileMapLoading] = useState<Record<string, boolean>>({})
+  const [fileMapErrors, setFileMapErrors] = useState<Record<string, string>>({})
 
-  const isBinary = (buffer: Uint8Array): boolean => {
-    // Check first 1024 bytes for null bytes or high concentration of non-printable chars
-    const checkSize = Math.min(buffer.length, 1024);
-    let nonPrintable = 0;
-    for (let i = 0; i < checkSize; i++) {
-      if (buffer[i] === 0) return true; // Null byte is a strong binary indicator
-      if (buffer[i]! < 32 && ![9, 10, 13].includes(buffer[i]!)) nonPrintable++;
-    }
-    return nonPrintable / checkSize > 0.3;
-  }
+  const filesByPath = useMemo(() => {
+    const map = new Map<string, ProjectFile>()
+    for (const f of files) map.set(f.path, f)
+    return map
+  }, [files])
 
-  const readEntry = async (entry: FileSystemEntry): Promise<{ path: string, content: string }[]> => {
-    if (entry.isFile) {
-      const fileEntry = entry as FileSystemFileEntry
-      return new Promise((resolve) => {
-        fileEntry.file(async (file) => {
-          try {
-            if (file.size > 1024 * 1024 * 10) {
-              resolve([{ path: entry.fullPath, content: "[CONTENIDO OMITIDO: ARCHIVO MAYOR A 10MB]" }]);
-              return;
-            }
-
-            const arrayBuffer = await file.arrayBuffer();
-            const uint8 = new Uint8Array(arrayBuffer);
-            
-            if (isBinary(uint8)) {
-              // Even if binary, let's keep the path so Gemini knows it exists
-              resolve([{ path: entry.fullPath, content: "[ARCHIVO BINARIO O MULTIMEDIA]" }]);
-              return;
-            }
-
-            const decoder = new TextDecoder('utf-8', { fatal: false });
-            const content = decoder.decode(uint8);
-            resolve([{ path: entry.fullPath, content }]);
-          } catch (err) {
-            console.error(`Error leyendo ${entry.fullPath}:`, err);
-            resolve([{ path: entry.fullPath, content: "[ERROR DE LECTURA]" }]);
-          }
-        });
-      });
-    } else if (entry.isDirectory) {
-      const dirEntry = entry as FileSystemDirectoryEntry
-      const reader = dirEntry.createReader();
-      
-      const readAllEntries = async () => {
-        let allEntries: FileSystemEntry[] = [];
-        let results: FileSystemEntry[] = [];
-        do {
-          results = await new Promise<FileSystemEntry[]>((resolve) => {
-            reader.readEntries(resolve, () => resolve([]));
-          });
-          allEntries = allEntries.concat(results);
-        } while (results.length > 0);
-        return allEntries;
-      }
-
-      const entries = await readAllEntries();
-      const filteredEntries = entries.filter(e => 
-        !['node_modules', '.git', 'dist', '.import', '.godot', 'build', 'bin', 'obj'].includes(e.name)
-      );
-      
-      const results = await Promise.all(filteredEntries.map(e => readEntry(e)));
-      return results.flat();
-    }
-    return [];
-  }
-
-  const onDrop = useCallback(async (acceptedFiles: File[], fileRejections: any, event: any) => {
+  const runOverview = useCallback(async (collected: ProjectFile[]) => {
     setLoading(true)
     setError(null)
-    setResult(null)
-    setFileCount(0)
-    setAnalyzedFiles([])
+    setOverview(null)
+    setStreamingText('')
+    setExpandedPath(null)
+    setFileMaps({})
+    setFileMapErrors({})
 
     try {
-      let filesToAnalyze: { path: string, content: string }[] = [];
-      const items = event.dataTransfer?.items;
-      
-      if (items) {
-        const entries = Array.from(items)
-          .map((item: any) => item.webkitGetAsEntry())
-          .filter(Boolean);
-        
-        const nestedFiles = await Promise.all(entries.map(e => readEntry(e)));
-        filesToAnalyze = nestedFiles.flat();
-      } else {
-        filesToAnalyze = await Promise.all(acceptedFiles.map(async (f) => ({
-          path: f.name,
-          content: await f.text()
-        })));
-      }
-
-      if (filesToAnalyze.length === 0) {
-        throw new Error("No se encontraron archivos procesables.");
-      }
-
-      setFileCount(filesToAnalyze.length);
-      setAnalyzedFiles(filesToAnalyze.map(f => f.path));
-
-      const response = await fetch('/api/analyze', {
+      const response = await fetch('/api/overview-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: filesToAnalyze }),
+        body: JSON.stringify({ files: collected }),
       })
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Error en el servidor de análisis');
+      if (!response.ok || !response.body) {
+        const errData = await response.json().catch(() => ({}))
+        throw new Error(errData.error || 'Error generando el mapa general')
       }
 
-      const data = await response.json()
-      setResult(data.result)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let finalOverview: Overview | null = null
+      let streamErr: string | null = null
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split('\n\n')
+        buffer = events.pop() ?? ''
+        for (const evt of events) {
+          if (!evt.trim()) continue
+          const lines = evt.split('\n')
+          let evtName = 'message'
+          let dataStr = ''
+          for (const line of lines) {
+            if (line.startsWith('event:')) evtName = line.slice(6).trim()
+            else if (line.startsWith('data:')) dataStr += line.slice(5).trim()
+          }
+          if (!dataStr) continue
+          try {
+            const payload = JSON.parse(dataStr)
+            if (evtName === 'chunk') {
+              setStreamingText(payload.accumulated ?? '')
+            } else if (evtName === 'done') {
+              finalOverview = payload as Overview
+            } else if (evtName === 'error') {
+              streamErr = payload.error ?? 'Error desconocido'
+            }
+          } catch {
+            /* ignore malformed event */
+          }
+        }
+      }
+
+      if (streamErr) throw new Error(streamErr)
+      if (!finalOverview) throw new Error('El mapa general nunca se completó.')
+      setOverview(finalOverview)
+      setStreamingText('')
     } catch (err: any) {
-      setError(err.message || 'Error inesperado en VibeMAP')
+      setError(err?.message || 'Error inesperado en VibeMap')
     } finally {
       setLoading(false)
     }
   }, [])
 
+  const onDrop = useCallback(async (acceptedFiles: File[], _fileRejections: FileRejection[], event: DropEvent) => {
+    setLoading(true)
+    setError(null)
+    setOverview(null)
+    setStreamingText('')
+    setFileCount(0)
+    setFiles([])
+
+    try {
+      let collected: ProjectFile[] = []
+      const dataTransfer = (event as DragEvent | undefined)?.dataTransfer
+      const items = dataTransfer?.items
+      if (items) {
+        const entries = Array.from(items)
+          .map((item) => item.webkitGetAsEntry())
+          .filter((e): e is FileSystemEntry => e !== null)
+        const nested = await Promise.all(entries.map((e) => readEntry(e)))
+        collected = nested.flat()
+      } else {
+        collected = await Promise.all(
+          acceptedFiles.map(async (f) => ({ path: f.name, content: await f.text() })),
+        )
+      }
+
+      if (collected.length === 0) {
+        throw new Error('No se encontraron archivos procesables.')
+      }
+
+      setFileCount(collected.length)
+      setFiles(collected)
+      await runOverview(collected)
+    } catch (err: any) {
+      setError(err?.message || 'Error inesperado en VibeMap')
+      setLoading(false)
+    }
+  }, [runOverview])
+
+  const handleRetry = useCallback(() => {
+    if (files.length > 0) runOverview(files)
+  }, [files, runOverview])
+
+  const handleExpandFile = useCallback(
+    async (ruta: string) => {
+      if (expandedPath === ruta) {
+        setExpandedPath(null)
+        return
+      }
+      setExpandedPath(ruta)
+
+      if (fileMaps[ruta] || fileMapLoading[ruta]) return
+
+      const file = filesByPath.get(ruta)
+      if (!file) {
+        setFileMapErrors((p) => ({ ...p, [ruta]: 'Archivo no encontrado en el upload.' }))
+        return
+      }
+      if (!file.content || file.content.startsWith('[')) {
+        setFileMapErrors((p) => ({ ...p, [ruta]: 'No hay contenido legible para este archivo.' }))
+        return
+      }
+
+      setFileMapLoading((p) => ({ ...p, [ruta]: true }))
+      setFileMapErrors((p) => {
+        const { [ruta]: _, ...rest } = p
+        return rest
+      })
+
+      try {
+        const response = await fetch('/api/file-map', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: file.path,
+            content: file.content,
+            projectContext: overview?.resumen ?? '',
+          }),
+        })
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}))
+          throw new Error(errData.error || 'Error generando mapa del archivo')
+        }
+        const data: FileMap = await response.json()
+        setFileMaps((p) => ({ ...p, [ruta]: data }))
+      } catch (err: any) {
+        setFileMapErrors((p) => ({ ...p, [ruta]: err?.message || 'Error inesperado' }))
+      } finally {
+        setFileMapLoading((p) => ({ ...p, [ruta]: false }))
+      }
+    },
+    [expandedPath, fileMaps, fileMapLoading, filesByPath, overview],
+  )
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop })
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-16 font-sans antialiased text-slate-900">
-      <header className="text-center mb-20">
+      <header className="text-center mb-16">
         <div className="inline-block px-4 py-1.5 mb-6 text-sm font-bold tracking-widest text-indigo-600 uppercase bg-indigo-50 rounded-full">
           Hackathon Edition v2.0
         </div>
         <h1 className="text-8xl font-black tracking-tighter mb-6 bg-gradient-to-br from-slate-900 via-indigo-950 to-indigo-900 bg-clip-text text-transparent">
-          VibeMAP
+          VibeMap
         </h1>
         <p className="text-2xl text-slate-500 max-w-2xl mx-auto font-medium leading-relaxed">
-          Ingeniería inversa visual inteligente. Sube cualquier proyecto y mira la arquitectura cobrar vida.
+          ¿Codex o Claude te generó código y no entiendes qué hace?
+          <br />
+          Súbelo y te lo explico como mapa mental, en palabras simples.
         </p>
       </header>
 
-      <main className="space-y-20">
-        <section 
-          {...getRootProps()} 
+      <main className="space-y-12">
+        <section
+          {...getRootProps()}
           className={`
-            relative group border-2 border-dashed rounded-[3rem] p-24 text-center transition-all duration-700
-            ${isDragActive 
-              ? 'border-indigo-600 bg-indigo-50/30 scale-[1.01] ring-8 ring-indigo-50' 
-              : 'border-slate-200 bg-white hover:border-indigo-400 hover:shadow-[0_32px_64px_-16px_rgba(0,0,0,0.1)]'}
+            relative group border-2 border-dashed rounded-[3rem] p-20 text-center transition-all duration-700
+            ${
+              isDragActive
+                ? 'border-indigo-600 bg-indigo-50/30 scale-[1.01] ring-8 ring-indigo-50'
+                : 'border-slate-200 bg-white hover:border-indigo-400 hover:shadow-[0_32px_64px_-16px_rgba(0,0,0,0.1)]'
+            }
           `}
         >
           <input {...getInputProps()} />
-          <div className="space-y-8">
-            <div className="w-28 h-28 bg-slate-900 text-white rounded-[2rem] flex items-center justify-center mx-auto mb-10 shadow-2xl group-hover:scale-110 transition-transform duration-500">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-14 w-14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          <div className="space-y-6">
+            <div className="w-24 h-24 bg-slate-900 text-white rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-2xl group-hover:scale-110 transition-transform duration-500">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-12 w-12"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
               </svg>
             </div>
             <div className="space-y-2">
-              <p className="text-4xl font-black tracking-tight text-slate-900">Suelta tu proyecto aquí</p>
-              <p className="text-slate-400 text-xl font-medium">Soporte universal: Godot, Unity, React, Python, C++, etc.</p>
+              <p className="text-3xl font-black tracking-tight text-slate-900">Suelta tu carpeta de proyecto</p>
+              <p className="text-slate-400 text-lg font-medium">
+                Funciona con código de cualquier IA: React, Python, Godot, Unity, C++, etc.
+              </p>
             </div>
           </div>
         </section>
 
         {loading && (
-          <div className="bg-white rounded-[3rem] p-20 shadow-xl border border-slate-100 flex flex-col items-center text-center space-y-8">
-            <div className="flex space-x-2">
-              <div className="w-4 h-4 bg-indigo-600 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-              <div className="w-4 h-4 bg-indigo-600 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-              <div className="w-4 h-4 bg-indigo-600 rounded-full animate-bounce"></div>
+          <div className="bg-white rounded-[3rem] p-12 shadow-xl border border-slate-100 space-y-6">
+            <div className="flex items-center gap-4">
+              <div className="flex space-x-2">
+                <div className="w-3 h-3 bg-indigo-600 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                <div className="w-3 h-3 bg-indigo-600 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                <div className="w-3 h-3 bg-indigo-600 rounded-full animate-bounce"></div>
+              </div>
+              <div>
+                <p className="text-xl font-black text-slate-900">
+                  Mapeando {fileCount} archivos…
+                </p>
+                <p className="text-slate-500 text-sm font-medium">Gemini está armando el mapa general.</p>
+              </div>
             </div>
-            <div className="space-y-2">
-              <p className="text-3xl font-black text-slate-900">Analizando {fileCount} archivos</p>
-              <p className="text-slate-500 text-lg font-medium">Gemini está reconstruyendo la arquitectura visual...</p>
-            </div>
-            <div className="w-full max-w-md bg-slate-100 h-2 rounded-full overflow-hidden">
-              <div className="bg-indigo-600 h-full w-full animate-[progress_20s_ease-in-out]"></div>
-            </div>
+            {streamingText && (
+              <pre className="text-xs font-mono text-slate-400 bg-slate-50 p-4 rounded-2xl overflow-hidden max-h-40 whitespace-pre-wrap">
+                {streamingText.slice(-1200)}
+              </pre>
+            )}
           </div>
         )}
 
         {error && (
-          <div className="bg-rose-50 border-2 border-rose-100 p-10 rounded-[3rem] flex items-center space-x-6 animate-in fade-in zoom-in duration-300">
-            <div className="bg-rose-500 text-white p-4 rounded-2xl shadow-lg shadow-rose-200">
-              <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+          <div className="bg-rose-50 border-2 border-rose-100 p-8 rounded-[2.5rem] flex items-center justify-between gap-5">
+            <div className="flex items-center gap-5">
+              <div className="bg-rose-500 text-white p-3 rounded-2xl shadow-lg shadow-rose-200 shrink-0">
+                <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-xl font-black text-rose-950">Algo falló</p>
+                <p className="text-rose-700 font-medium">{error}</p>
+              </div>
             </div>
-            <div className="space-y-1">
-              <p className="text-2xl font-black text-rose-950">Fallo de Escaneo</p>
-              <p className="text-rose-700 text-lg font-medium">{error}</p>
-            </div>
+            {files.length > 0 && (
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="shrink-0 px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold rounded-2xl transition-colors shadow-md shadow-rose-200"
+              >
+                Reintentar
+              </button>
+            )}
           </div>
         )}
 
-        {result && (
-          <div className="bg-white rounded-[4rem] shadow-[0_40px_80px_-16px_rgba(0,0,0,0.1)] overflow-hidden border border-slate-50 animate-in fade-in slide-in-from-bottom-20 duration-1000">
-            <div className="bg-slate-950 px-12 py-8 flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div className="flex space-x-2">
-                  <div className="w-3 h-3 rounded-full bg-slate-800"></div>
-                  <div className="w-3 h-3 rounded-full bg-slate-800"></div>
-                  <div className="w-3 h-3 rounded-full bg-slate-800"></div>
+        {overview && (
+          <>
+            <section className="bg-white rounded-[3rem] shadow-[0_30px_60px_-16px_rgba(0,0,0,0.08)] border border-slate-50 overflow-hidden">
+              <div className="bg-slate-950 px-10 py-6 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex space-x-2">
+                    <div className="w-3 h-3 rounded-full bg-slate-800"></div>
+                    <div className="w-3 h-3 rounded-full bg-slate-800"></div>
+                    <div className="w-3 h-3 rounded-full bg-slate-800"></div>
+                  </div>
+                  <div className="h-6 w-px bg-slate-800 mx-2"></div>
+                  <span className="text-indigo-400 font-mono text-xs font-bold tracking-[0.4em] uppercase">
+                    Mapa General
+                  </span>
                 </div>
-                <div className="h-6 w-px bg-slate-800 mx-2"></div>
-                <span className="text-indigo-400 font-mono text-sm font-bold tracking-[0.4em] uppercase">VibeMAP Analysis Report</span>
+                <div className="px-3 py-1 bg-indigo-500/10 rounded-full border border-indigo-500/20">
+                  <span className="text-indigo-400 text-xs font-black uppercase tracking-widest">
+                    {fileCount} archivos
+                  </span>
+                </div>
               </div>
-              <div className="px-4 py-1 bg-indigo-500/10 rounded-full border border-indigo-500/20">
-                <span className="text-indigo-400 text-xs font-black uppercase tracking-widest">{fileCount} Archivos Mapeados</span>
+              <div className="p-10 space-y-8">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                    De qué va el proyecto
+                  </div>
+                  <p className="text-2xl text-slate-800 leading-relaxed font-medium">{overview.resumen}</p>
+                </div>
+                {overview.estructura_general && (
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                      Estructura general
+                    </div>
+                    <p className="text-base text-slate-700 font-mono bg-slate-100/60 inline-block px-4 py-2 rounded-xl">
+                      {overview.estructura_general}
+                    </p>
+                  </div>
+                )}
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                    Cómo se conecta todo
+                  </div>
+                  <Mermaid chart={overview.diagrama_mermaid} />
+                </div>
               </div>
-            </div>
-            <div className="p-20 prose prose-slate prose-xl max-w-none 
-              prose-headings:text-slate-900 prose-headings:font-black prose-headings:tracking-tighter
-              prose-p:leading-relaxed prose-p:text-slate-600
-              prose-strong:text-slate-900 prose-strong:font-bold
-              prose-code:text-indigo-600 prose-code:bg-indigo-50 prose-code:px-2 prose-code:py-0.5 prose-code:rounded-lg prose-code:before:content-none prose-code:after:content-none
-              prose-pre:bg-slate-900 prose-pre:rounded-[2rem] prose-pre:p-8 prose-pre:shadow-2xl">
-              <ReactMarkdown
-                components={{
-                  code({ node, inline, className, children, ...props }: any) {
-                    const match = /language-(\w+)/.exec(className || '')
-                    const content = String(children).replace(/\n$/, '')
-                    if (!inline && match && match[1] === 'mermaid') {
-                      return <Mermaid chart={content} />
-                    }
-                    return (
-                      <code className={className} {...props}>
-                        {children}
-                      </code>
-                    )
-                  }
-                }}
-              >
-                {result}
-              </ReactMarkdown>
-            </div>
-          </div>
+            </section>
+
+            <section>
+              <div className="flex items-end justify-between mb-4 px-2">
+                <h2 className="text-2xl font-black tracking-tight text-slate-900">Archivos del proyecto</h2>
+                <p className="text-sm text-slate-400 font-medium">
+                  Click para ver el mapa de cada uno
+                </p>
+              </div>
+              <div className="space-y-3">
+                {overview.archivos.map((a) => (
+                  <FileCard
+                    key={a.ruta}
+                    archivo={a}
+                    expanded={expandedPath === a.ruta}
+                    onExpand={() => handleExpandFile(a.ruta)}
+                    fileMap={fileMaps[a.ruta] ?? null}
+                    loading={!!fileMapLoading[a.ruta]}
+                    error={fileMapErrors[a.ruta] ?? null}
+                  />
+                ))}
+              </div>
+            </section>
+
+            {overview.recapitulacion && overview.recapitulacion.length > 0 && (
+              <section className="bg-gradient-to-br from-indigo-50 via-white to-indigo-50/40 rounded-[3rem] p-12 border border-indigo-100">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 mb-3">
+                  Para llevarte
+                </div>
+                <h2 className="text-3xl font-black tracking-tight text-slate-900 mb-6">
+                  Si solo recuerdas {overview.recapitulacion.length === 1 ? 'una cosa' : `${overview.recapitulacion.length} cosas`}…
+                </h2>
+                <ul className="space-y-3">
+                  {overview.recapitulacion.map((punto, i) => (
+                    <li key={i} className="flex items-start gap-4">
+                      <span className="shrink-0 w-7 h-7 rounded-full bg-indigo-600 text-white text-sm font-black flex items-center justify-center">
+                        {i + 1}
+                      </span>
+                      <p className="text-lg text-slate-800 leading-relaxed font-medium pt-0.5">{punto}</p>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </>
         )}
       </main>
 
-      <footer className="mt-40 text-center pb-24 space-y-4">
-        <div className="w-20 h-1 bg-slate-200 mx-auto rounded-full mb-12"></div>
-        <p className="text-slate-400 font-bold tracking-widest uppercase text-sm">VibeMAP Hackathon Engine &copy; 2026</p>
-        <p className="text-slate-300 text-sm">Diseñado para la comprensión visual de sistemas complejos</p>
+      <footer className="mt-32 text-center pb-20 space-y-4">
+        <div className="w-20 h-1 bg-slate-200 mx-auto rounded-full mb-10"></div>
+        <p className="text-slate-400 font-bold tracking-widest uppercase text-sm">
+          VibeMap Hackathon Engine &copy; 2026
+        </p>
+        <p className="text-slate-300 text-sm">Diseñado para entender código generado por IA</p>
       </footer>
-
-      <style>{`
-        @keyframes progress {
-          0% { width: 0%; }
-          100% { width: 95%; }
-        }
-      `}</style>
     </div>
   )
 }
