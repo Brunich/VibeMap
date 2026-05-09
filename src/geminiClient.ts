@@ -17,6 +17,6 @@ const systemInstruction = "Eres VibeMAP, un motor de ingeniería inversa visual.
 
 // We recommend using gemini-2.0-flash for general tasks, or gemini-1.5-pro for complex coding/reasoning.
 export const vibeMapModel = genAI.getGenerativeModel({
-  model: "gemini-flash-latest", 
+  model: "gemini-2.0-flash",
   systemInstruction: systemInstruction,
 });

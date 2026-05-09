@@ -3,25 +3,35 @@ import { useDropzone } from 'react-dropzone'
 import ReactMarkdown from 'react-markdown'
 import mermaid from 'mermaid'
 
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'neutral',
+  securityLevel: 'strict',
+})
+
 const Mermaid = ({ chart }: { chart: string }) => {
   const ref = useRef<HTMLDivElement>(null)
+  const [renderError, setRenderError] = useState<string | null>(null)
 
   useEffect(() => {
-    mermaid.initialize({ 
-      startOnLoad: true, 
-      theme: 'neutral',
-      securityLevel: 'loose'
+    if (!ref.current) return
+    setRenderError(null)
+    const id = `mermaid-${crypto.randomUUID()}`
+    mermaid.render(id, chart).then(({ svg }) => {
+      if (ref.current) ref.current.innerHTML = svg
+    }).catch(err => {
+      console.error("Mermaid render error:", err)
+      setRenderError('Sintaxis inválida en el diagrama')
     })
-    if (ref.current) {
-      const id = `mermaid-${Math.random().toString(36).substr(2, 9)}`
-      mermaid.render(id, chart).then(({ svg }) => {
-        if (ref.current) ref.current.innerHTML = svg
-      }).catch(err => {
-        console.error("Mermaid render error:", err)
-        if (ref.current) ref.current.innerHTML = `<div class="p-4 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono text-slate-500">Error en diagrama: ${err.message || 'Sintaxis inválida'}</div>`
-      })
-    }
   }, [chart])
+
+  if (renderError) {
+    return (
+      <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono text-slate-500">
+        Error en diagrama: {renderError}
+      </div>
+    )
+  }
 
   return <div ref={ref} className="flex justify-center my-12 overflow-x-auto p-4 bg-white rounded-3xl border border-slate-50 shadow-sm" />
 }
