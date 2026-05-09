@@ -137,14 +137,18 @@ ${fileContentStr}
 INSTRUCCIONES PARA EL JSON DE SALIDA:
 - "resumen": qué hace el proyecto, con UN ejemplo concreto (no metáforas tipo "es como X").
 - "estructura_general": el patrón arquitectónico real que ves (no inventes uno).
-- "diagrama_mermaid": diagrama DETALLADO. Usa subgraph para agrupar funciones por
-  archivo/clase. Dentro de cada subgraph, lista las 2-4 funciones más importantes.
-  Conecta funciones entre archivos con flechas etiquetadas con '|llama a|', '|usa|',
-  '|crea|', etc. Identifica estructuras de datos relevantes (Array, Map, etc.).
+- "diagrama_mermaid": 'flowchart TD' DETALLADO con subgraphs por archivo/clase. Dentro
+  de cada subgraph lista las 2-4 funciones más importantes y las estructuras de datos
+  relevantes. Conecta funciones entre archivos con flechas '-->|llama a|', '-->|usa|',
+  '-->|crea|'. Etiquetas SIEMPRE con '|texto|', NUNCA con ': texto'.
+- "flujo_principal": **CRÍTICO** — pasos numerados (1, 2, 3...) en ORDEN cronológico
+  describiendo el caso de uso típico de principio a fin. Cada "accion" debe mencionar
+  funciones reales y archivos. Ej: paso 1 'Player._ready() se ejecuta al cargar la
+  escena y crea una nueva Pokeball', paso 2 'Player llama a inventory.add_item(pokeball)
+  que la guarda en items[]', paso 3 '...'. Mínimo 3 pasos, máximo ~8.
 - "archivos": ordena de más a menos importante. El "rol" debe mencionar al menos una
   función concreta del archivo cuando ayude a entender.
-- "recapitulacion": 3-5 takeaways finales. Lo que el usuario debe llevarse después de
-  leer todo. Sin jerga. Cada uno una frase corta.
+- "recapitulacion": 3-5 takeaways finales. Sin jerga. Cada uno una frase corta.
 `.trim();
 }
 
@@ -166,18 +170,27 @@ ${truncated}
 
 INSTRUCCIONES PARA EL JSON DE SALIDA:
 - "explicacion": EXPLICA con un ejemplo del código mismo. NO uses "es como una mochila"
-  ni metáforas vacías. Describe qué pasa con un ejemplo concreto del archivo. Ejemplo:
-  "Inventory guarda los objetos del jugador en un array. Cuando el jugador recoge una
-   Pokeball, se llama add_item(pokeball) y queda en items[] hasta que use(id) la elimina."
+  ni metáforas vacías. Ejemplo válido: "Inventory guarda los objetos del jugador en un
+  array. Cuando el jugador recoge una Pokeball, se llama add_item(pokeball) y queda en
+  items[] hasta que use(id) la elimina y dispara su acción."
 - "estructura": el tipo concreto de estructura/patrón usado en este archivo. Ej:
-  "Resource de Godot con Array de Item", "Componente React con dos useState",
-  "Función pura que recibe Player y devuelve Bool".
-- "diagrama_mermaid": muestra las funciones del archivo como nodos, con flechas
-  etiquetadas según qué se llama a qué. Si hay estructuras de datos (arrays, mapas,
-  diccionarios), muéstralas también como nodos.
-- "funciones": para cada función importante incluye 'real' (nombre exacto), 'humana'
-  (qué hace + cuándo se usa, con ejemplo si ayuda), y 'llama_a' (lista de funciones
-  invocadas — útil para que el diagrama no aluce conexiones).
+  "Resource de Godot con Array de Item", "Componente React con dos useState".
+- "diagrama_mermaid": **OBLIGATORIO 'sequenceDiagram'**. Muestra los participants
+  (clases/objetos involucrados) y las llamadas en ORDEN cronológico de arriba a abajo.
+  Cada flecha es una llamada concreta con sus argumentos reales. Usa 'Note over X: ...'
+  para marcar fases. No uses flowchart aquí — el usuario quiere ver el ORDEN de llamadas.
+- "flujo_ejecucion": **CRÍTICO** — pasos numerados (cada string empieza con "1.", "2.",
+  etc.) describiendo en ORDEN cronológico qué hace el archivo, mencionando la función
+  responsable de cada paso. Mínimo 3 pasos. Ej:
+    "1. _ready() se ejecuta al cargar la escena."
+    "2. Crea una Pokeball nueva con Pokeball.new()."
+    "3. Llama a inventory.add_item(pokeball) para guardarla en items[]."
+- "funciones_definidas": funciones que ESTE archivo declara. Para cada una: 'real'
+  (nombre exacto), 'humana' (qué hace y cuándo, con ejemplo), 'llama_a' (qué invoca).
+- "funciones_usadas": funciones EXTERNAS que este archivo llama pero NO define.
+  Pueden venir de imports, otros archivos del proyecto, o métodos heredados.
+  Para cada una: 'nombre' (la función o método), 'donde' (de dónde viene),
+  'como' (la llamada concreta tal cual aparece en el código + para qué la usa aquí).
 - "puntos_clave": 2-4 cosas específicas para recordar de este archivo.
 - "resumen_archivo": una sola frase de cierre que recapitule lo explicado.
 `.trim();
@@ -245,7 +258,11 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
 
 function normalizeMermaid(chart: string): string {
   if (!chart) return chart;
-  // Patrón frecuente que rompe Mermaid: 'A --> B: etiqueta' → 'A -->|etiqueta| B'
+  // En sequenceDiagram el ':' después de la flecha es sintaxis válida (mensaje).
+  // Solo normalizamos para flowchart/graph.
+  const isSequence = /^\s*sequenceDiagram\b/m.test(chart);
+  if (isSequence) return chart;
+  // Patrón frecuente que rompe flowchart: 'A --> B: etiqueta' → 'A -->|etiqueta| B'
   return chart.replace(
     /(\w+(?:\[[^\]]*\])?)\s*-->\s*(\w+(?:\[[^\]]*\])?)\s*:\s*([^\n]+)/g,
     (_, from, to, label) => `${from} -->|${label.trim()}| ${to}`

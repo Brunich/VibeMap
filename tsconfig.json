@@ -41,5 +41,6 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
   },
-  "exclude": ["client", "node_modules"]
+  "include": ["src"],
+  "exclude": ["client", "node_modules", "dist"]
 }

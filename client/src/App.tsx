@@ -16,25 +16,40 @@ type OverviewArchivo = {
   importancia: 'alta' | 'media' | 'baja'
 }
 
+type FlujoPaso = {
+  paso: number
+  accion: string
+  archivos: string[]
+}
+
 type Overview = {
   resumen: string
   estructura_general: string
   diagrama_mermaid: string
+  flujo_principal: FlujoPaso[]
   archivos: OverviewArchivo[]
   recapitulacion: string[]
 }
 
-type FuncionInfo = {
+type FuncionDefinida = {
   real: string
   humana: string
   llama_a: string[]
+}
+
+type FuncionUsada = {
+  nombre: string
+  donde: string
+  como: string
 }
 
 type FileMap = {
   explicacion: string
   estructura: string
   diagrama_mermaid: string
-  funciones: FuncionInfo[]
+  flujo_ejecucion: string[]
+  funciones_definidas: FuncionDefinida[]
+  funciones_usadas: FuncionUsada[]
   puntos_clave: string[]
   resumen_archivo: string
 }
@@ -226,17 +241,35 @@ function FileCard({
                 </div>
               )}
 
+              {fileMap.flujo_ejecucion && fileMap.flujo_ejecucion.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                    Cómo funciona, paso a paso
+                  </div>
+                  <ol className="space-y-2 border-l-2 border-indigo-200 pl-5">
+                    {fileMap.flujo_ejecucion.map((paso, i) => (
+                      <li key={i} className="relative text-slate-800 text-sm leading-relaxed">
+                        <span className="absolute -left-[1.65rem] top-0.5 w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">
+                          {i + 1}
+                        </span>
+                        <span>{paso.replace(/^\d+\.\s*/, '')}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-1">
-                  Flujo interno
+                  Diagrama de secuencia
                 </div>
                 <Mermaid chart={fileMap.diagrama_mermaid} />
               </div>
 
-              {fileMap.funciones.length > 0 && (
+              {fileMap.funciones_definidas && fileMap.funciones_definidas.length > 0 && (
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
-                    Funciones del archivo
+                    Funciones que define este archivo
                   </div>
                   <div className="overflow-hidden rounded-2xl border border-slate-100">
                     <table className="w-full text-sm">
@@ -248,7 +281,7 @@ function FileCard({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 bg-white">
-                        {fileMap.funciones.map((fn) => (
+                        {fileMap.funciones_definidas.map((fn) => (
                           <tr key={fn.real}>
                             <td className="px-4 py-2 font-mono text-indigo-700 align-top whitespace-nowrap">{fn.real}</td>
                             <td className="px-4 py-2 text-slate-700 align-top">{fn.humana}</td>
@@ -268,6 +301,34 @@ function FileCard({
                                 </div>
                               )}
                             </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {fileMap.funciones_usadas && fileMap.funciones_usadas.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-2">
+                    Funciones que usa de fuera
+                  </div>
+                  <div className="overflow-hidden rounded-2xl border border-slate-100">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-100/70 text-slate-600 text-xs uppercase tracking-wider">
+                        <tr>
+                          <th className="text-left font-bold px-4 py-2">Función</th>
+                          <th className="text-left font-bold px-4 py-2">De dónde</th>
+                          <th className="text-left font-bold px-4 py-2">Cómo se usa aquí</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {fileMap.funciones_usadas.map((fn, i) => (
+                          <tr key={`${fn.nombre}-${i}`}>
+                            <td className="px-4 py-2 font-mono text-emerald-700 align-top whitespace-nowrap">{fn.nombre}</td>
+                            <td className="px-4 py-2 text-slate-500 align-top text-xs">{fn.donde}</td>
+                            <td className="px-4 py-2 text-slate-700 align-top">{fn.como}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -636,6 +697,40 @@ function App() {
                   </div>
                   <Mermaid chart={overview.diagrama_mermaid} />
                 </div>
+                {overview.flujo_principal && overview.flujo_principal.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 mb-3">
+                      Flujo principal, paso a paso
+                    </div>
+                    <ol className="space-y-3">
+                      {overview.flujo_principal.map((p) => (
+                        <li
+                          key={p.paso}
+                          className="flex gap-4 bg-slate-50/80 border border-slate-100 rounded-2xl p-4"
+                        >
+                          <span className="shrink-0 w-9 h-9 rounded-2xl bg-indigo-600 text-white font-black flex items-center justify-center">
+                            {p.paso}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-slate-800 leading-relaxed">{p.accion}</p>
+                            {p.archivos.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 mt-2">
+                                {p.archivos.map((ruta) => (
+                                  <code
+                                    key={ruta}
+                                    className="text-[11px] font-mono bg-white text-slate-500 border border-slate-200 px-2 py-0.5 rounded-md"
+                                  >
+                                    {ruta}
+                                  </code>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
               </div>
             </section>
 

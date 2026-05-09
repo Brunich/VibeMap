@@ -21,45 +21,66 @@ REGLAS DE COMUNICACIÓN — CRÍTICAS:
   vacías molestan al usuario. En lugar de eso, EXPLICA con un EJEMPLO CONCRETO tomado
   del propio código. Ejemplo:
     MAL: "Inventory es como la mochila del jugador."
-    BIEN: "Inventory guarda los objetos que el jugador recoge. Por ejemplo, cuando el
-           jugador encuentra una Pokeball, se llama a inventory.add_item(pokeball) y la
-           Pokeball queda guardada en el array 'items' hasta que el jugador la use."
-- Cada función o archivo se describe con frases simples, dando el ejemplo de QUÉ pasa
-  cuando se ejecuta o cuándo se llama dentro del propio proyecto.
-- Nunca expliques sintaxis del lenguaje. Explica QUÉ HACE el archivo y POR QUÉ existe.
-- Si no estás seguro de algo, dilo. Nunca inventes una conexión que no veas en el código.
+    BIEN: "Inventory guarda los objetos del jugador. Cuando el jugador recoge una Pokeball,
+           se llama inventory.add_item(pokeball) y queda en items[] hasta que use(id)
+           la elimina y dispara su acción."
+- Nunca expliques sintaxis del lenguaje. Explica QUÉ HACE y POR QUÉ existe.
+- Si no estás seguro de algo, dilo. Nunca inventes conexiones que no veas en el código.
 
-REGLAS ESTRICTAS DE MERMAID — DIAGRAMAS DETALLADOS:
-- Sintaxis: 'graph TD' o 'flowchart TD' como primera línea.
-- Cuando expliques un archivo, AGRUPA las funciones de cada clase con 'subgraph':
-    subgraph Player
-      P_ready[ready]
-      P_use[use_item]
-    end
-    subgraph Inventory
-      I_add[add_item]
-      I_use[use]
-    end
-    P_ready -->|llama a| I_add
-    P_use -->|llama a| I_use
-- Identifica el tipo de estructura/colección que se usa cuando sea relevante:
-    I_items[items: Array de Item]
-    M_cache[cache: Map de String a Player]
-- Etiqueta TODA flecha con el verbo o la descripción de la llamada. Formatos válidos:
-    A -->|llama a| B
-    A -->|envía datos| B
-    A -->|hereda de| B
-    A -.->|usa opcionalmente| B
-- NUNCA uses ': verbo' después de la flecha — eso rompe Mermaid. Es siempre '|verbo|'.
-- IDs de nodos cortos sin espacios (ej: P_ready, I_add). El texto en español va entre [].
-- Sin caracteres '(', ')', '/' dentro de los corchetes — usa palabras simples.
-- Diagrama del proyecto entero: muestra cómo se conectan los archivos/clases principales
-  Y qué función concreta hace cada conexión.
-- Diagrama de un archivo: muestra las funciones del archivo, qué se llaman entre sí, y
-  qué estructuras de datos manejan.
+REGLA MAESTRA: TODO TIENE QUE ESTAR EN ORDEN
+El usuario quiere entender cómo funciona el código PASO A PASO, no solo qué se conecta
+con qué. Cada explicación, lista y diagrama tiene que respetar el orden REAL de
+ejecución: qué pasa primero, qué pasa después, qué llama a qué y cuándo.
 
-OBJETIVO: que alguien que recibió este código de una IA pueda entender la estructura
-sin necesitar conocer el lenguaje a fondo.
+REGLAS ESTRICTAS DE MERMAID:
+
+1) DIAGRAMA DEL PROYECTO ENTERO (overview) — usa 'flowchart TD' con subgraphs:
+   - Agrupa funciones por archivo/clase con subgraph.
+   - Conecta funciones entre archivos con flechas etiquetadas con la operación real.
+   - Identifica estructuras de datos (items: Array de Item, cache: Map de String, etc.).
+   Ejemplo válido:
+     flowchart TD
+       subgraph Player
+         P_ready[ready]
+         P_use[use_item]
+       end
+       subgraph Inventory
+         I_items[items: Array de Item]
+         I_add[add_item]
+         I_use[use]
+       end
+       P_ready -->|llama a| I_add
+       I_add -->|append a| I_items
+       P_use -->|llama a| I_use
+
+2) DIAGRAMA DE UN ARCHIVO INDIVIDUAL — usa 'sequenceDiagram' (orden temporal):
+   - Cada participant es una clase, módulo u objeto involucrado.
+   - Las flechas '->>' son llamadas. Las '-->>' son retornos.
+   - Cada línea va EN ORDEN cronológico (de arriba a abajo = de primero a último).
+   - Etiqueta cada flecha con la llamada concreta y argumentos: 'add_item(pokeball)'.
+   - Usa 'Note over X: ...' para clarificar pasos.
+   Ejemplo válido:
+     sequenceDiagram
+       participant Player
+       participant Inventory
+       participant Pokeball
+       Note over Player: al iniciar la escena
+       Player->>Pokeball: new()
+       Player->>Inventory: add_item(pokeball)
+       Inventory->>Inventory: items.append(pokeball)
+       Note over Player: cuando el usuario presiona usar
+       Player->>Inventory: use(0)
+       Inventory->>Pokeball: apply()
+       Pokeball-->>Inventory: print(\"lanzaste pokeball\")
+
+REGLAS COMUNES DE MERMAID:
+- IDs sin espacios (P_ready, I_add). Texto en español va entre [].
+- Sin caracteres '(', ')', '/', '#' dentro de los corchetes [] del flowchart.
+  En sequenceDiagram el texto después de ':' SÍ admite paréntesis para argumentos.
+- Para flechas con etiqueta en flowchart usa SIEMPRE '|texto|'. NUNCA ': texto'.
+
+OBJETIVO: que alguien que recibió este código de una IA pueda entender, paso a paso,
+qué hace y en qué orden.
 `.trim();
 
 export const overviewSchema: Schema = {
@@ -71,22 +92,45 @@ export const overviewSchema: Schema = {
     },
     estructura_general: {
       type: SchemaType.STRING,
-      description: "Patrón arquitectónico que se ve en el código. Ej: 'Cliente React + servidor Express con API REST', 'Juego con escenas Godot organizadas por entidad', 'Pipeline de scripts Python en cadena'.",
+      description: "Patrón arquitectónico real que se ve en el código. Ej: 'Cliente React + servidor Express con API REST', 'Juego con escenas Godot organizadas por entidad', 'Pipeline de scripts Python en cadena'.",
     },
     diagrama_mermaid: {
       type: SchemaType.STRING,
-      description: "Diagrama Mermaid (graph TD o flowchart TD). DEBE incluir las clases/archivos principales como subgraph y dentro mostrar las funciones más importantes y qué llaman entre sí. Flechas siempre etiquetadas con '|texto|'.",
+      description: "Diagrama Mermaid 'flowchart TD' con subgraphs por archivo/clase. Dentro de cada subgraph lista las 2-4 funciones más importantes y las estructuras de datos relevantes. Conecta funciones entre archivos con flechas etiquetadas con '|texto|'.",
+    },
+    flujo_principal: {
+      type: SchemaType.ARRAY,
+      description: "Pasos numerados del flujo principal de ejecución del proyecto, en ORDEN cronológico. Describe qué pasa primero, segundo, etc. Cubre el caso de uso típico de principio a fin.",
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          paso: {
+            type: SchemaType.INTEGER,
+            description: "Número del paso, empezando en 1.",
+          },
+          accion: {
+            type: SchemaType.STRING,
+            description: "Qué pasa en este paso, en una frase clara con la función o archivo concreto involucrado. Ej: 'Player._ready() crea una Pokeball y se la pasa a inventory.add_item().'",
+          },
+          archivos: {
+            type: SchemaType.ARRAY,
+            description: "Rutas de los archivos involucrados en este paso (1-3 normalmente).",
+            items: { type: SchemaType.STRING },
+          },
+        },
+        required: ["paso", "accion", "archivos"],
+      },
     },
     archivos: {
       type: SchemaType.ARRAY,
-      description: "Lista de archivos principales del proyecto (ignora archivos triviales o auto-generados)",
+      description: "Lista de archivos principales del proyecto, ordenada por importancia (más importante primero). Ignora archivos triviales o auto-generados.",
       items: {
         type: SchemaType.OBJECT,
         properties: {
           ruta: { type: SchemaType.STRING },
           rol: {
             type: SchemaType.STRING,
-            description: "Una línea (max 14 palabras) describiendo qué hace este archivo, idealmente con un ejemplo del propio código.",
+            description: "Una línea (max 14 palabras) describiendo qué hace este archivo, mencionando al menos una función concreta cuando ayude.",
           },
           importancia: {
             type: SchemaType.STRING,
@@ -100,11 +144,11 @@ export const overviewSchema: Schema = {
     },
     recapitulacion: {
       type: SchemaType.ARRAY,
-      description: "3-5 puntos clave que el usuario debe llevarse del análisis. Frases cortas, sin jerga, con ejemplos del proyecto cuando ayude. Aquí va el 'si solo recuerdas tres cosas, recuerda esto'.",
+      description: "3-5 puntos clave que el usuario debe llevarse del análisis. Frases cortas, sin jerga.",
       items: { type: SchemaType.STRING },
     },
   },
-  required: ["resumen", "estructura_general", "diagrama_mermaid", "archivos", "recapitulacion"],
+  required: ["resumen", "estructura_general", "diagrama_mermaid", "flujo_principal", "archivos", "recapitulacion"],
 };
 
 export const fileMapSchema: Schema = {
@@ -112,50 +156,86 @@ export const fileMapSchema: Schema = {
   properties: {
     explicacion: {
       type: SchemaType.STRING,
-      description: "Explicación del archivo CON UN EJEMPLO CONCRETO del propio código. NO metáforas tipo 'es como X'. Estructura ideal: '[archivo] hace [qué]. Por ejemplo, cuando [evento del proyecto], [archivo] [acción concreta]'. 2-4 líneas.",
+      description: "Explicación del archivo CON UN EJEMPLO CONCRETO del propio código. NO metáforas tipo 'es como X'. Estructura: '[archivo] hace [qué]. Cuando [evento concreto del proyecto], [acción concreta con función/variable real].' 2-4 líneas.",
     },
     estructura: {
       type: SchemaType.STRING,
-      description: "Estructura/patrón principal usado en este archivo. Ej: 'Clase con array dinámico de items', 'Resource singleton con diccionario de configs', 'Componente React con varios useState', 'Función pura que recibe X y devuelve Y'.",
+      description: "Estructura/patrón principal usado. Ej: 'Clase Godot con Array de Item', 'Componente React con dos useState', 'Función pura que recibe Player y devuelve Bool', 'Singleton de Resource con dict de configs'.",
     },
     diagrama_mermaid: {
       type: SchemaType.STRING,
-      description: "Diagrama Mermaid del flujo interno. DEBE mostrar las funciones del archivo como nodos, las llamadas entre ellas como flechas etiquetadas, y las estructuras de datos relevantes (arrays, mapas, etc.) como nodos auxiliares.",
+      description: "Diagrama Mermaid 'sequenceDiagram' (orden temporal de arriba a abajo). Muestra los participants involucrados (Player, Inventory, etc.), las llamadas con sus argumentos reales, y los retornos. Usa 'Note over X: ...' para clarificar fases. CRÍTICO: respeta el orden cronológico real del código.",
     },
-    funciones: {
+    flujo_ejecucion: {
       type: SchemaType.ARRAY,
-      description: "Funciones o métodos importantes del archivo, traducidos a lenguaje humano con ejemplos concretos.",
+      description: "Pasos numerados de lo que hace el archivo, en ORDEN cronológico. Cada paso una línea corta describiendo QUÉ pasa y CUÁL función lo hace. Ej: '1. _ready() se ejecuta al cargar la escena.' '2. Crea una Pokeball nueva con Pokeball.new().' '3. Llama a inventory.add_item(pokeball) para guardarla.'",
+      items: { type: SchemaType.STRING },
+    },
+    funciones_definidas: {
+      type: SchemaType.ARRAY,
+      description: "Funciones que ESTE archivo declara. Para cada una: nombre real, qué hace + cuándo, qué otras funciones invoca.",
       items: {
         type: SchemaType.OBJECT,
         properties: {
           real: {
             type: SchemaType.STRING,
-            description: "Nombre real de la función tal cual aparece en el código",
+            description: "Nombre real exacto, tal cual está en el código.",
           },
           humana: {
             type: SchemaType.STRING,
-            description: "Qué hace y CUÁNDO se usa, con un mini-ejemplo si ayuda. Máximo 18 palabras.",
+            description: "Qué hace + cuándo se ejecuta + un mini-ejemplo si ayuda. Máximo 22 palabras.",
           },
           llama_a: {
             type: SchemaType.ARRAY,
-            description: "Otras funciones (de este archivo o de otros) que esta función invoca directamente. Vacío si no llama a nada.",
+            description: "Otras funciones (de este archivo o de fuera) que esta función invoca. Vacío si no llama a nada.",
             items: { type: SchemaType.STRING },
           },
         },
         required: ["real", "humana", "llama_a"],
       },
     },
+    funciones_usadas: {
+      type: SchemaType.ARRAY,
+      description: "Funciones EXTERNAS que este archivo usa pero NO define (vienen de imports, librerías, otros archivos del proyecto, o métodos heredados). Para cada una: nombre, dónde vive, y CÓMO se usa aquí (con ejemplo de la llamada real).",
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          nombre: {
+            type: SchemaType.STRING,
+            description: "Nombre de la función o método. Si es método de objeto, usa 'objeto.metodo' (ej: 'inventory.add_item').",
+          },
+          donde: {
+            type: SchemaType.STRING,
+            description: "De dónde viene. Ej: 'Inventory.gd', 'librería express', 'método heredado de CharacterBody2D'.",
+          },
+          como: {
+            type: SchemaType.STRING,
+            description: "Cómo se usa en este archivo, con la llamada concreta. Ej: 'inventory.add_item(Pokeball.new()) dentro de _ready() para añadir el objeto inicial'. Máximo 25 palabras.",
+          },
+        },
+        required: ["nombre", "donde", "como"],
+      },
+    },
     puntos_clave: {
       type: SchemaType.ARRAY,
-      description: "2-4 ideas que vale la pena recordar de este archivo",
+      description: "2-4 ideas específicas que vale la pena recordar de este archivo.",
       items: { type: SchemaType.STRING },
     },
     resumen_archivo: {
       type: SchemaType.STRING,
-      description: "Una sola frase final que recapitule lo que se acaba de explicar. Algo como 'En resumen: este archivo X y se usa cuando Y'.",
+      description: "Una sola frase final que recapitule lo explicado. Ej: 'En resumen: Player coordina el inventario y reacciona al usuario, delegando la lógica de objetos a Inventory.'",
     },
   },
-  required: ["explicacion", "estructura", "diagrama_mermaid", "funciones", "puntos_clave", "resumen_archivo"],
+  required: [
+    "explicacion",
+    "estructura",
+    "diagrama_mermaid",
+    "flujo_ejecucion",
+    "funciones_definidas",
+    "funciones_usadas",
+    "puntos_clave",
+    "resumen_archivo",
+  ],
 };
 
 export const overviewModel = genAI.getGenerativeModel({
