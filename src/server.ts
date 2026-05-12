@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import path from "path";
+import { fileURLToPath } from "url";
 import {
   overviewModel,
   fileMapModel,
@@ -8,8 +10,10 @@ import {
   diagramToCodeModel,
 } from "./geminiClient.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const port = 3000;
+const port = Number(process.env.PORT) || 3000;
+const isProduction = process.env.NODE_ENV === "production";
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",")
@@ -573,6 +577,17 @@ app.post("/api/diagram-to-code", apiLimit, async (req, res) => {
   }
 });
 
+// In production, serve the built React app from client/dist
+if (isProduction) {
+  const clientDist = path.resolve(__dirname, "..", "client", "dist");
+  app.use(express.static(clientDist));
+  // SPA fallback: any non-API GET serves index.html
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || req.path.startsWith("/api/")) return next();
+    res.sendFile(path.join(clientDist, "index.html"));
+  });
+}
+
 process.on("unhandledRejection", (reason) => {
   console.error("[unhandledRejection]", reason);
 });
@@ -582,5 +597,5 @@ process.on("uncaughtException", (err) => {
 });
 
 app.listen(port, () => {
-  console.log(`VibeMap backend running at http://localhost:${port}`);
+  console.log(`VibeMap server running on port ${port}`);
 });

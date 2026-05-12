@@ -6,7 +6,10 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
+    "build:client": "cd client && npm install && npm run build",
+    "build:all": "npm run build:client && npm run build",
     "server": "tsc && node dist/server.js",
+    "start": "node dist/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
