@@ -38,6 +38,16 @@ test('TypeScript: imports con .js, alias y nombres importados', () => {
   assert.ok(p.alerts.some(a => a.kind === 'sin-usar' && a.text.includes('unused')));
 });
 
+test('un import de CSS antes no se come los nombres del siguiente', () => {
+  const p = analyze([
+    { path: 'src/main.tsx', content: "import './index.css'\nimport App from './App.tsx'\ncreateRoot(document.body).render(<App/>)" },
+    { path: 'src/App.tsx', content: 'export default function App() { return <p/> }' },
+    { path: 'src/index.css', content: 'body{}' },
+  ]);
+  assert.deepEqual(p.byPath.get('src/main.tsx')!.uses['src/App.tsx'], ['App']);
+  assert.ok(p.byPath.get('src/main.tsx')!.imports.includes('src/index.css'));
+});
+
 test('Python: imports relativos y ciclos', () => {
   const p = analyze([
     { path: 'app/main.py', content: 'from .game import run\n\nif __name__ == "__main__":\n    run()\n' },

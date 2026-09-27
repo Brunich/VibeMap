@@ -73,7 +73,7 @@ type RawImport = { spec: string; names: string[] };
 
 function jsImports(src: string): RawImport[] {
   const out: RawImport[] = [];
-  const re = /(?:^|[;\n])\s*(?:import|export)\s+(type\s+)?([^;]{0,600}?)\s*from\s*['"]([^'"]+)['"]|(?:^|[;\n])\s*import\s*['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
+  const re = /(?:^|[;\n])\s*(?:import|export)\s+(type\s+)?([^;'"`]{0,600}?)\s*from\s*['"]([^'"]+)['"]|(?:^|[;\n])\s*import\s*['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
   for (const m of src.matchAll(re)) {
     if (m[3]) {
       if (m[1]) continue; // import type: no hay flujo en tiempo de ejecución
