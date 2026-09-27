@@ -1,72 +1,63 @@
 # VibeMap
 
-> *Drop your idea. Get the map.*
+[![CI](https://github.com/Brunich/VibeMap/actions/workflows/ci.yml/badge.svg)](https://github.com/Brunich/VibeMap/actions/workflows/ci.yml)
 
-VibeMap is an AI powered architecture visualizer that turns plain-language descriptions into interactive diagrams, real-world analogies, and clean commented code  so you actually understand what you're building, not just copy it.
+**Suelta la carpeta de un proyecto y míralo como mapa mental:** dónde arranca, qué archivo usa a cuál, qué funciones define cada uno y qué está sobrando.
 
----
+**En vivo: https://vibemap-brunich.vercel.app**
 
-## Inspiration
+![VibeMap](docs/vibemap.png)
 
-We used our own necessity as inspiration. As students who learned to program in the AI era, using AI as a tool feels completely normal but sometimes we don't even understand what is going on under the hood. So we decided to keep things simple and help people like us really understand what happens in their own code. ChatGPT, Claude, and Gemini can give you code, but we want to give you a tool that maps what you are building so you can actually follow it.
+Nació en un hackathon (equipo de 3, 8 horas) para entender el código que te genera una IA. Esta es mi versión: la tomé del [repositorio del equipo](https://github.com/CharlsMex24/VibeMap_Hackathon) con su historial y la rehíce para que funcione sin servidor ni clave de API.
 
----
+## Qué ves
 
-## What it does
-
-VibeMap takes a description of what you want to build and gives you three things simultaneously:
-
-- **Architecture Diagram**  a Mermaid flowchart showing how your components connect
-- **Real-World Analogy**  a comparison with everyday activities so you can actually comprehend what is being explained
-- **Commented Code**  clean code organized by file, linked to the diagram
-
-Instead of reading code and imagining the structure, you see the structure first.
-
----
-
-## How we built it
-
-| Layer | Tech |
+| Vista | Qué te dice |
 |---|---|
-| Frontend | React + TypeScript + Vite |
-| Styling | Tailwind CSS |
-| AI | Google Gemini API |
-| Diagrams | Mermaid.js |
+| **Mapa** | El proyecto al centro y una rama por tipo de archivo: entrada, interfaz, lógica, datos, estilos, configuración y pruebas. Cada hoja es un archivo con cuántos lo usan. |
+| **Recorrido** | Lo que se carga, en orden, desde la entrada: qué archivo carga a cuál y para usar qué. |
+| **Archivos** | El mapa de cada archivo (quién lo usa a la izquierda, qué usa a la derecha), sus funciones con quién las llama y a quién llaman, y el código con esas líneas marcadas. |
+| **Alertas** | Imports en círculo, archivos que nadie usa, archivos de más de 400 líneas y funciones exportadas que nadie llama. |
 
-We used React and Tailwind for the frontend, Mermaid.js for rendering the architecture diagrams, and the Gemini API as the backbone. We engineered a structured prompt that returns the Mermaid diagram syntax, the metaphor explanation, and the file list with code — making the output predictable and renderable without post-processing.
+Entiende **TypeScript, JavaScript/React, Python y GDScript (Godot)**. Para probarlo sin subir nada trae dos ejemplos: su propio código y un RPG chico en Godot.
 
----
+## Cómo funciona
 
-## Challenges we ran into
+Todo pasa en el navegador ([`client/src/analyze.ts`](client/src/analyze.ts)); tu código no sale de tu equipo.
 
-The hardest part wasn't the code it was the idea itself. With limited time, we needed something genuinely useful, visually impressive, and actually buildable in one day. Once we locked in the concept, we had to fight with prompt engineering to get the AI to return exactly the structure we needed. We also ran into issues with HTML and file size limits when uploading content, and spent real time on the design of the web, because we wanted it to look attractive and polished, not just functional.
+1. **Lee.** Recorre la carpeta, ignora `node_modules`, builds, binarios y archivos generados, y quita comentarios.
+2. **Encuentra.** Imports de cada lenguaje (`import`/`require`, `from … import`, `preload`/`load` y las clases globales `class_name` y autoloads de Godot) y las funciones, clases y componentes que define cada archivo.
+3. **Resuelve.** Convierte cada import en un archivo real del proyecto (extensiones, `index`, imports `.js` que apuntan a `.ts`, rutas `res://`) o en un paquete externo.
+4. **Conecta.** Busca en el cuerpo de cada función las llamadas a funciones del mismo archivo o de los archivos que importa.
+5. **Interpreta.** Detecta la entrada (`createRoot`, `app.listen`, `if __name__ == "__main__"`, la escena principal de `project.godot`), clasifica cada archivo por su ruta y lo que hace, y arma el recorrido y las alertas.
 
----
+El mapa mental es SVG dibujado a mano ([`MindMap.tsx`](client/src/MindMap.tsx)); en el celular se vuelve un árbol.
 
-## Accomplishments that we're proud of
+### Explicar con IA (opcional)
 
-- Built a working full-stack AI product from scratch in 8 hours
-- The three-output system (diagram + analogy + code) actually works and makes architecture genuinely understandable
-- Mermaid diagrams render correctly from raw AI output with no manual editing
-- The app looks and feels like a real product, not a hackathon prototype
+El servidor original del hackathon sigue en [`src/`](src/): con una clave de Gemini, el botón **Explicar con IA** de cada archivo le pide una explicación paso a paso.
 
----
+```bash
+cp .env.example .env         # pon tu GEMINI_API_KEY
+npm install && npm run server
+cd client && VITE_AI=on npm run dev
+```
 
-## What we learned
+## Correr y probar
 
-We learned a lot about working with external APIs and structuring AI prompts to get reliable, parseable output. But more than the technical side this was the first hackathon for every single member of our team. We learned how to work under pressure, make decisions fast, split work efficiently, and ship something real together in a few hours. That experience alone was worth it.
+```bash
+cd client
+npm install
+npm run dev     # http://localhost:5173
+npm test        # pruebas del analizador (node:test)
+```
 
----
+## Qué sigue
 
-## What's next for VibeMap
+- Llamadas a métodos a través de objetos (`player.inventory.add_item`) con el tipo de la variable.
+- Más lenguajes: C# (Unity) y Go.
+- Exportar el mapa como imagen.
 
-- **GitHub integration**  analyze any public repo directly from a URL
-- **Exportable blueprints**  download diagrams as PNG or PDF
-- **Diff mode** compare two versions of a project and visualize what changed
-- **Team collaboration**  share your VibeMap with teammates via a link
+## Créditos
 
----
-
-## Team
-
-Built in 8 hours by a 3-person team — first hackathon for all of us.
+Idea y primera versión: el equipo del hackathon, en [CharlsMex24/VibeMap_Hackathon](https://github.com/CharlsMex24/VibeMap_Hackathon). Su historial viene completo en este repositorio.
